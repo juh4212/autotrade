@@ -1,10 +1,10 @@
 python-dotenv
 openai
-pyupbit
+pybit
 ta
-webdriver-manager
-Pillow
-youtube-transcript-api
 streamlit
 plotly
 schedule
+requests
+pandas
+numpy
