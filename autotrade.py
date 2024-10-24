@@ -1,9 +1,9 @@
 import os
 from dotenv import load_dotenv
-import pyupbit
+from pybit import HTTP  # Bybit의 REST API를 사용하기 위한 라이브러리
 import pandas as pd
 import json
-from openai import OpenAI
+import openai  # OpenAI 라이브러리 수정
 import ta
 from ta.utils import dropna
 import time
@@ -22,13 +22,19 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Upbit 객체 생성
-access = os.getenv("UPBIT_ACCESS_KEY")
-secret = os.getenv("UPBIT_SECRET_KEY")
-if not access or not secret:
+# Bybit 객체 생성
+api_key = os.getenv("BYBIT_API_KEY")
+api_secret = os.getenv("BYBIT_API_SECRET")
+if not api_key or not api_secret:
     logger.error("API keys not found. Please check your .env file.")
     raise ValueError("Missing API keys. Please check your .env file.")
-upbit = pyupbit.Upbit(access, secret)
+
+# Bybit REST API 세션 생성
+session = HTTP(
+    endpoint="https://api.bybit.com",  # 실제 거래를 위한 엔드포인트
+    api_key=api_key,
+    api_secret=api_secret
+)
 
 # SQLite 데이터베이스 초기화 함수 - 거래 내역을 저장할 테이블을 생성
 def init_db():
@@ -41,21 +47,21 @@ def init_db():
                   percentage INTEGER,
                   reason TEXT,
                   btc_balance REAL,
-                  krw_balance REAL,
+                  usdt_balance REAL,
                   btc_avg_buy_price REAL,
-                  btc_krw_price REAL,
+                  btc_usdt_price REAL,
                   reflection TEXT)''')
     conn.commit()
     return conn
 
 # 거래 기록을 DB에 저장하는 함수
-def log_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
+def log_trade(conn, decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
     c = conn.cursor()
     timestamp = datetime.now().isoformat()
     c.execute("""INSERT INTO trades 
-                 (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection) 
+                 (timestamp, decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection))
+              (timestamp, decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection))
     conn.commit()
 
 # 최근 투자 기록 조회
@@ -70,24 +76,24 @@ def get_recent_trades(conn, days=7):
 def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
-    # 초기 잔고 계산 (KRW + BTC * 현재 가격)
-    initial_balance = trades_df.iloc[-1]['krw_balance'] + trades_df.iloc[-1]['btc_balance'] * trades_df.iloc[-1]['btc_krw_price']
+    # 초기 잔고 계산 (USDT + BTC * 현재 가격)
+    initial_balance = trades_df.iloc[-1]['usdt_balance'] + trades_df.iloc[-1]['btc_balance'] * trades_df.iloc[-1]['btc_usdt_price']
     # 최종 잔고 계산
-    final_balance = trades_df.iloc[0]['krw_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_krw_price']
+    final_balance = trades_df.iloc[0]['usdt_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_usdt_price']
     return (final_balance - initial_balance) / initial_balance * 100
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
         logger.error("OpenAI API key is missing or invalid.")
         return None
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
-    response = client.chat.completions.create(
-        model="o1-preview",
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
         messages=[
             {
                 "role": "user",
@@ -203,23 +209,65 @@ def get_bitcoin_news():
         logger.error(f"Error fetching news: {e}")
         return []
 
+# 가격 데이터 가져오기 함수 (Bybit용)
+def get_ohlcv(symbol, interval, limit):
+    url = "https://api.bybit.com/v5/market/kline"
+    params = {
+        "category": "linear",
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
+    }
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if data["retCode"] != 0:
+            logger.error(f"Error fetching OHLCV data: {data['retMsg']}")
+            return None
+        records = data["result"]["list"]
+        df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        df = df.astype(float)
+        return df
+    except requests.RequestException as e:
+        logger.error(f"Error fetching OHLCV data: {e}")
+        return None
+
 ### 메인 AI 트레이딩 로직
 def ai_trading():
-    global upbit
+    global session
     ### 데이터 가져오기
     # 1. 현재 투자 상태 조회
-    all_balances = upbit.get_balances()
-    filtered_balances = [balance for balance in all_balances if balance['currency'] in ['BTC', 'KRW']]
-    
+    try:
+        balances = session.get_wallet_balance()['result']['balances']
+        balances = {balance['coin']: balance for balance in balances}
+        filtered_balances = {coin: balances.get(coin, {'free': 0, 'availableBalance': 0}) for coin in ['BTC', 'USDT']}
+    except Exception as e:
+        logger.error(f"Error fetching balances: {e}")
+        return
+
     # 2. 오더북(호가 데이터) 조회
-    orderbook = pyupbit.get_orderbook("KRW-BTC")
-    
+    try:
+        orderbook_response = session.orderbook(symbol="BTCUSDT")
+        orderbook = orderbook_response['result']
+    except Exception as e:
+        logger.error(f"Error fetching orderbook: {e}")
+        orderbook = None
+
     # 3. 차트 데이터 조회 및 보조지표 추가
-    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=180)
+    df_daily = get_ohlcv("BTCUSDT", interval="D", limit=180)
+    if df_daily is None:
+        logger.error("Failed to retrieve daily OHLCV data.")
+        return
     df_daily = dropna(df_daily)
     df_daily = add_indicators(df_daily)
     
-    df_hourly = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=168)  # 7 days of hourly data
+    df_hourly = get_ohlcv("BTCUSDT", interval="60", limit=168)  # 7 days of hourly data
+    if df_hourly is None:
+        logger.error("Failed to retrieve hourly OHLCV data.")
+        return
     df_hourly = dropna(df_hourly)
     df_hourly = add_indicators(df_hourly)
 
@@ -234,8 +282,8 @@ def ai_trading():
     news_headlines = get_bitcoin_news()
     
     ### AI에게 데이터 제공하고 판단 받기
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
         logger.error("OpenAI API key is missing or invalid.")
         return None
     try:
@@ -264,7 +312,6 @@ Example Response 1:
   "decision": "buy",
   "percentage": 50,
   "reason": "Based on the current market indicators and positive news, it's a good opportunity to invest."
-
 }
 
 Example Response 2:
@@ -272,7 +319,6 @@ Example Response 2:
   "decision": "sell",
   "percentage": 30,
   "reason": "Due to negative trends in the market and high fear index, it is advisable to reduce holdings."
-
 }
 
 Example Response 3:
@@ -280,12 +326,11 @@ Example Response 3:
   "decision": "hold",
   "percentage": 0,
   "reason": "Market indicators are neutral; it's best to wait for a clearer signal."
-
 }
 """
 
-            response = client.chat.completions.create(
-                model="o1-preview",
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "user",
@@ -364,44 +409,63 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
 
             order_executed = False
 
+            # 현재 가격 가져오기
+            current_price = float(session.latest_information_for_symbol(symbol="BTCUSDT")['result']['list'][0]['lastPrice'])
+
             if decision == "buy":
-                my_krw = upbit.get_balance("KRW")
-                if my_krw is None:
-                    logger.error("Failed to retrieve KRW balance.")
+                my_usdt = float(filtered_balances['USDT']['availableBalance'])
+                if my_usdt is None:
+                    logger.error("Failed to retrieve USDT balance.")
                     return
-                buy_amount = my_krw * (percentage / 100) * 0.9995  # 수수료 고려
-                if buy_amount > 5000:
-                    logger.info(f"Buy Order Executed: {percentage}% of available KRW")
+                buy_amount_usdt = my_usdt * (int(percentage) / 100) * 0.9995  # 수수료 고려
+                if buy_amount_usdt > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
+                    logger.info(f"Buy Order Executed: {percentage}% of available USDT")
                     try:
-                        order = upbit.buy_market_order("KRW-BTC", buy_amount)
-                        if order:
+                        order = session.place_active_order(
+                            symbol="BTCUSDT",
+                            side="Buy",
+                            order_type="Market",
+                            qty=buy_amount_usdt / current_price,
+                            time_in_force="GoodTillCancel",
+                            reduce_only=False,
+                            close_on_trigger=False
+                        )
+                        if order['retCode'] == 0:
                             logger.info(f"Buy order executed successfully: {order}")
                             order_executed = True
                         else:
-                            logger.error("Buy order failed.")
+                            logger.error(f"Buy order failed: {order['retMsg']}")
                     except Exception as e:
                         logger.error(f"Error executing buy order: {e}")
                 else:
-                    logger.warning("Buy Order Failed: Insufficient KRW (less than 5000 KRW)")
+                    logger.warning("Buy Order Failed: Insufficient USDT (less than minimum required)")
             elif decision == "sell":
-                my_btc = upbit.get_balance("KRW-BTC")
+                my_btc = float(filtered_balances['BTC']['availableBalance'])
                 if my_btc is None:
                     logger.error("Failed to retrieve BTC balance.")
                     return
-                sell_amount = my_btc * (percentage / 100)
-                current_price = pyupbit.get_current_price("KRW-BTC")
-                if sell_amount * current_price > 5000:
+                sell_amount_btc = my_btc * (int(percentage) / 100) * 0.9995  # 수수료 고려
+                if sell_amount_btc * current_price > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
                     logger.info(f"Sell Order Executed: {percentage}% of held BTC")
                     try:
-                        order = upbit.sell_market_order("KRW-BTC", sell_amount)
-                        if order:
+                        order = session.place_active_order(
+                            symbol="BTCUSDT",
+                            side="Sell",
+                            order_type="Market",
+                            qty=sell_amount_btc,
+                            time_in_force="GoodTillCancel",
+                            reduce_only=False,
+                            close_on_trigger=False
+                        )
+                        if order['retCode'] == 0:
+                            logger.info(f"Sell order executed successfully: {order}")
                             order_executed = True
                         else:
-                            logger.error("Sell order failed.")
+                            logger.error(f"Sell order failed: {order['retMsg']}")
                     except Exception as e:
                         logger.error(f"Error executing sell order: {e}")
                 else:
-                    logger.warning("Sell Order Failed: Insufficient BTC (less than 5000 KRW worth)")
+                    logger.warning("Sell Order Failed: Insufficient BTC (less than minimum required)")
             elif decision == "hold":
                 logger.info("Decision is to hold. No action taken.")
             else:
@@ -410,15 +474,19 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
 
             # 거래 실행 여부와 관계없이 현재 잔고 조회
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
-            balances = upbit.get_balances()
-            btc_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'BTC'), 0)
-            krw_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'KRW'), 0)
-            btc_avg_buy_price = next((float(balance['avg_buy_price']) for balance in balances if balance['currency'] == 'BTC'), 0)
-            current_btc_price = pyupbit.get_current_price("KRW-BTC")
+            try:
+                balances = session.get_wallet_balance()['result']['balances']
+                balances = {balance['coin']: balance for balance in balances}
+                btc_balance = float(balances.get('BTC', {'availableBalance': 0})['availableBalance'])
+                usdt_balance = float(balances.get('USDT', {'availableBalance': 0})['availableBalance'])
+                btc_avg_buy_price = None  # Bybit에서는 평균 매수 단가를 직접 계산해야 함
+                current_btc_price = current_price
 
-            # 거래 기록을 DB에 저장하기
-            log_trade(conn, decision, percentage if order_executed else 0, reason, 
-                      btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
+                # 거래 기록을 DB에 저장하기
+                log_trade(conn, decision, percentage if order_executed else 0, reason, 
+                          btc_balance, usdt_balance, btc_avg_buy_price, current_btc_price, reflection)
+            except Exception as e:
+                logger.error(f"Error fetching updated balances: {e}")
     except sqlite3.Error as e:
         logger.error(f"Database connection error: {e}")
         return
@@ -444,9 +512,6 @@ if __name__ == "__main__":
         finally:
             trading_in_progress = False
 
-    #테스트
-    # job()
-
     # 매 4시간마다 실행
     schedule.every().day.at("00:00").do(job)
     schedule.every().day.at("04:00").do(job)
@@ -457,4 +522,4 @@ if __name__ == "__main__":
 
     while True:
         schedule.run_pending()
-        time.sleep(1)   
+        time.sleep(1)
