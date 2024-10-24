@@ -1,9 +1,9 @@
 import os
-from dotenv import load_dotenv
-from pybit import HTTP  # Bybit의 REST API를 사용하기 위한 라이브러리
+# from dotenv import load_dotenv  # 제거 또는 주석 처리
+from pybit import HTTP
 import pandas as pd
 import json
-import openai  # OpenAI 라이브러리 수정
+import openai
 import ta
 from ta.utils import dropna
 import time
@@ -15,8 +15,8 @@ import re
 import schedule
 import numpy as np
 
-# .env 파일에 저장된 환경 변수를 불러오기 (API 키 등)
-load_dotenv()
+# 환경 변수를 서버에서 직접 설정할 경우, load_dotenv()는 필요 없음
+# load_dotenv()  # 제거 또는 주석 처리
 
 # 로깅 설정 - 로그 레벨을 INFO로 설정하여 중요 정보 출력
 logging.basicConfig(level=logging.INFO)
@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 api_key = os.getenv("BYBIT_API_KEY")
 api_secret = os.getenv("BYBIT_API_SECRET")
 if not api_key or not api_secret:
-    logger.error("API keys not found. Please check your .env file.")
-    raise ValueError("Missing API keys. Please check your .env file.")
+    logger.error("API keys not found. Please check your environment variables.")
+    raise ValueError("Missing API keys. Please check your environment variables.")
 
 # Bybit REST API 세션 생성
 session = HTTP(
