@@ -8,13 +8,11 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from pybit.v5 import Client  # V5 API용 클라이언트 임포트
 import openai
 import ta
 from ta.utils import dropna
-from pymongo import MongoClient  # MongoDB 클라이언트 추가
-from urllib.parse import quote_plus  # 비밀번호 URL 인코딩을 위한 모듈
-# from selenium import webdriver  # 이미지 캡처가 필요하다면 주석 해제
+from pymongo import MongoClient
+from urllib.parse import quote_plus
 
 # 로깅 설정 - 로그 레벨을 DEBUG로 설정하고, 콘솔에만 출력
 logging.basicConfig(
@@ -26,25 +24,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bybit V5 API 클라이언트 생성
-api_key = os.getenv("BYBIT_API_KEY")
-api_secret = os.getenv("BYBIT_API_SECRET")
-if not api_key or not api_secret:
+# Bybit V5 API 엔드포인트
+BASE_URL = "https://api.bybit.com"
+
+# API 키 및 시크릿
+API_KEY = os.getenv("BYBIT_API_KEY")
+API_SECRET = os.getenv("BYBIT_API_SECRET")
+if not API_KEY or not API_SECRET:
     logger.error("API keys not found. Please check your environment variables.")
     raise ValueError("Missing API keys. Please check your environment variables.")
 
 logger.debug("Bybit API 키가 성공적으로 로드되었습니다.")
 
-try:
-    session = Client(
-        api_key=api_key,
-        api_secret=api_secret,
-        test=False  # 실제 거래를 원할 경우 False로 설정
-    )
-    logger.debug("Bybit V5 REST API 세션이 성공적으로 생성되었습니다.")
-except Exception as e:
-    logger.exception(f"Bybit V5 REST API 세션 생성 실패: {e}")
-    raise
+# 시그니처 생성 함수
+def generate_signature(params, secret):
+    """시그니처 생성"""
+    ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
+    return hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
 
 # MongoDB 연결 설정
 def init_db():
@@ -249,7 +245,7 @@ def get_fear_and_greed_index():
         logger.exception(f"공포 탐욕 지수 조회 실패: {e}")
         return None
 
-# 가격 데이터 가져오기 함수 (Bybit V5용)
+# 가격 데이터 가져오기 함수 (Bybit V5 API 사용)
 def get_ohlcv(symbol, interval, limit):
     logger.debug(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
     endpoint = "/v5/market/kline"
@@ -275,7 +271,7 @@ def get_ohlcv(symbol, interval, limit):
         logger.exception(f"OHLCV 데이터 조회 실패: {e}")
         return None
 
-### 메인 AI 트레이딩 로직
+### **메인 AI 트레이딩 로직**
 def ai_trading():
     logger.debug("ai_trading 함수 시작")
     global session
@@ -562,11 +558,14 @@ Possible decisions:
                 leverage = max(1, min(int(leverage), 10))
                 try:
                     # 레버리지 설정
-                    session.private().set_leverage(
+                    response = session.private().set_leverage(
                         symbol="BTCUSDT",
                         buyLeverage=leverage,
                         sellLeverage=leverage
                     )
+                    if response['retCode'] != 0:
+                        logger.error(f"레버리지 설정 오류: {response['retMsg']}")
+                        return
                     logger.debug(f"레버리지 설정 완료: {leverage}x")
                 except Exception as e:
                     logger.exception(f"레버리지 설정 실패: {e}")
@@ -627,11 +626,14 @@ Possible decisions:
                 leverage = max(1, min(int(leverage), 10))
                 try:
                     # 레버리지 설정
-                    session.private().set_leverage(
+                    response = session.private().set_leverage(
                         symbol="BTCUSDT",
                         buyLeverage=leverage,
                         sellLeverage=leverage
                     )
+                    if response['retCode'] != 0:
+                        logger.error(f"레버리지 설정 오류: {response['retMsg']}")
+                        return
                     logger.debug(f"레버리지 설정 완료: {leverage}x")
                 except Exception as e:
                     logger.exception(f"레버리지 설정 실패: {e}")
