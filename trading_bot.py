@@ -13,6 +13,8 @@ import ta
 from ta.utils import dropna
 from pymongo import MongoClient
 from urllib.parse import quote_plus
+import hashlib
+import hmac
 
 # 로깅 설정 - 로그 레벨을 DEBUG로 설정하고, 콘솔에만 출력
 logging.basicConfig(
@@ -41,6 +43,90 @@ def generate_signature(params, secret):
     """시그니처 생성"""
     ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
     return hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
+
+# Bybit V5 API 호출 함수
+def call_bybit_api(endpoint, method='GET', params=None, data=None):
+    """Bybit V5 API 호출 함수"""
+    url = BASE_URL + endpoint
+    headers = {
+        "Content-Type": "application/json"
+    }
+    if params is None:
+        params = {}
+    if method.upper() == 'GET':
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.exception(f"API 호출 실패: {e}")
+            return None
+    elif method.upper() == 'POST':
+        try:
+            response = requests.post(url, params=params, json=data, headers=headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.exception(f"API 호출 실패: {e}")
+            return None
+    else:
+        logger.error(f"지원되지 않는 HTTP 메서드: {method}")
+        return None
+
+def get_position(symbol):
+    """포지션 조회"""
+    endpoint = "/v5/position/list"
+    params = {
+        "api_key": API_KEY,
+        "symbol": symbol,
+        "timestamp": int(time.time() * 1000),
+        "recv_window": 5000
+    }
+    params["sign"] = generate_signature(params, API_SECRET)
+    return call_bybit_api(endpoint, method='GET', params=params)
+
+def get_wallet_balance(coin="USDT"):
+    """잔고 조회"""
+    endpoint = "/v5/account/wallet-balance"
+    params = {
+        "api_key": API_KEY,
+        "coin": coin,
+        "timestamp": int(time.time() * 1000),
+        "recv_window": 5000
+    }
+    params["sign"] = generate_signature(params, API_SECRET)
+    return call_bybit_api(endpoint, method='GET', params=params)
+
+def place_order(symbol, side, order_type, qty, leverage=1, reduce_only=False):
+    """주문 생성"""
+    endpoint = "/v5/order/create"
+    params = {
+        "api_key": API_KEY,
+        "symbol": symbol,
+        "side": side,  # Buy or Sell
+        "orderType": order_type,  # Market
+        "qty": qty,
+        "timeInForce": "GoodTillCancel",
+        "reduceOnly": reduce_only,
+        "timestamp": int(time.time() * 1000),
+        "recv_window": 5000
+    }
+    params["sign"] = generate_signature(params, API_SECRET)
+    return call_bybit_api(endpoint, method='POST', params=params, data=params)
+
+def set_leverage(symbol, leverage):
+    """레버리지 설정"""
+    endpoint = "/v5/account/set-leverage"
+    params = {
+        "api_key": API_KEY,
+        "symbol": symbol,
+        "buyLeverage": leverage,
+        "sellLeverage": leverage,
+        "timestamp": int(time.time() * 1000),
+        "recv_window": 5000
+    }
+    params["sign"] = generate_signature(params, API_SECRET)
+    return call_bybit_api(endpoint, method='POST', params=params, data=params)
 
 # MongoDB 연결 설정
 def init_db():
@@ -153,7 +239,7 @@ Recent trading data:
 {trades_df.to_json(orient='records', date_format='iso')}
 
 Current market data:
-{current_market_data}
+{json.dumps(current_market_data)}
 
 Overall performance in the last 7 days: {performance:.2f}%
 
@@ -255,34 +341,34 @@ def get_ohlcv(symbol, interval, limit):
         "interval": interval,
         "limit": limit
     }
-    try:
-        response = session.public().kline(**params)
-        if response['retCode'] != 0:
-            logger.error(f"OHLCV 데이터 조회 오류: {response['retMsg']}")
+    response = call_bybit_api(endpoint, method='GET', params=params)
+    if response and response.get('retCode') == 0:
+        try:
+            records = response['result']['list']
+            df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+            df = df.astype(float)
+            logger.debug(f"OHLCV 데이터 조회 성공 - 총 {len(df)}건")
+            return df
+        except Exception as e:
+            logger.exception(f"OHLCV 데이터 처리 실패: {e}")
             return None
-        records = response['result']['list']
-        df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df.set_index('timestamp', inplace=True)
-        df = df.astype(float)
-        logger.debug(f"OHLCV 데이터 조회 성공 - 총 {len(df)}건")
-        return df
-    except Exception as e:
-        logger.exception(f"OHLCV 데이터 조회 실패: {e}")
+    else:
+        logger.error(f"OHLCV 데이터 조회 오류: {response.get('retMsg') if response else 'No response'}")
         return None
 
-### **메인 AI 트레이딩 로직**
+### 메인 AI 트레이딩 로직
 def ai_trading():
     logger.debug("ai_trading 함수 시작")
-    global session
     ### 데이터 가져오기
     # 1. 현재 포지션 조회 (Bybit V5 API 사용)
     try:
         logger.debug("현재 포지션 조회 시도")
-        response = session.private().position_list(symbol="BTCUSDT")
+        response = get_position("BTCUSDT")
         logger.debug(f"포지션 조회 응답: {response}")
-        if response['retCode'] != 0:
-            logger.error(f"포지션 조회 오류: {response['retMsg']}")
+        if not response or response.get('retCode') != 0:
+            logger.error(f"포지션 조회 오류: {response.get('retMsg') if response else 'No response'}")
             return
         positions = response['result']['list']
         # 포지션 정보 파싱
@@ -296,10 +382,10 @@ def ai_trading():
     # 2. 현재 잔고 조회 (Bybit V5 API 사용)
     try:
         logger.debug("현재 잔고 조회 시도")
-        response = session.private().wallet_balance(coin="USDT")
+        response = get_wallet_balance("USDT")
         logger.debug(f"잔고 조회 응답: {response}")
-        if response['retCode'] != 0:
-            logger.error(f"잔고 조회 오류: {response['retMsg']}")
+        if not response or response.get('retCode') != 0:
+            logger.error(f"잔고 조회 오류: {response.get('retMsg') if response else 'No response'}")
             return
         usdt_balance = float(response['result']['USDT']['availableBalance'])
         logger.debug(f"USDT 잔고: {usdt_balance}")
@@ -310,10 +396,10 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.debug("오더북 조회 시도")
-        response = session.public().orderbook(symbol="BTCUSDT", limit=50)
+        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": "BTCUSDT", "limit": 50})
         logger.debug(f"오더북 조회 응답: {response}")
-        if response['retCode'] != 0:
-            logger.error(f"오더북 조회 오류: {response['retMsg']}")
+        if not response or response.get('retCode') != 0:
+            logger.error(f"오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
             orderbook = None
         else:
             orderbook = response['result']['order_book']
@@ -538,11 +624,11 @@ Possible decisions:
         # 현재 가격 가져오기 (Bybit V5 API 사용)
         try:
             logger.debug("현재 가격 데이터 조회 시도")
-            response = session.public().latest_information_for_symbol(symbol="BTCUSDT")
-            if response['retCode'] != 0:
-                logger.error(f"현재 가격 조회 오류: {response['retMsg']}")
+            response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": "BTCUSDT"})
+            if not response or response.get('retCode') != 0:
+                logger.error(f"현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
                 return
-            current_price = float(response['result'][0]['lastPrice'])
+            current_price = float(response['result']['list'][0]['lastPrice'])
             logger.debug(f"현재 BTC 가격: {current_price}")
         except Exception as e:
             logger.exception(f"현재 가격 데이터 조회 실패: {e}")
@@ -558,13 +644,9 @@ Possible decisions:
                 leverage = max(1, min(int(leverage), 10))
                 try:
                     # 레버리지 설정
-                    response = session.private().set_leverage(
-                        symbol="BTCUSDT",
-                        buyLeverage=leverage,
-                        sellLeverage=leverage
-                    )
-                    if response['retCode'] != 0:
-                        logger.error(f"레버리지 설정 오류: {response['retMsg']}")
+                    response = set_leverage(symbol="BTCUSDT", leverage=leverage)
+                    if not response or response.get('retCode') != 0:
+                        logger.error(f"레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
                     logger.debug(f"레버리지 설정 완료: {leverage}x")
                 except Exception as e:
@@ -576,20 +658,19 @@ Possible decisions:
                     logger.info(f"롱 포지션 주문 시도: {percentage}%의 USDT와 {leverage}x 레버리지")
                     order_qty = round((position_size * leverage) / current_price, 6)  # 레버리지 적용
                     try:
-                        order = session.private().order_create(
+                        order = place_order(
                             symbol="BTCUSDT",
                             side="Buy",
-                            orderType="Market",
+                            order_type="Market",
                             qty=order_qty,
-                            timeInForce="GoodTillCancel",
-                            reduceOnly=False,
-                            closeOnTrigger=False
+                            leverage=leverage,
+                            reduce_only=False
                         )
-                        if order['retCode'] == 0:
+                        if order and order.get('retCode') == 0:
                             logger.info(f"롱 포지션 주문 성공: {order}")
                             order_executed = True
                         else:
-                            logger.error(f"롱 포지션 주문 실패: {order['retMsg']}")
+                            logger.error(f"롱 포지션 주문 실패: {order.get('retMsg') if order else 'No response'}")
                     except Exception as e:
                         logger.exception(f"롱 포지션 주문 중 오류 발생: {e}")
                 else:
@@ -600,20 +681,19 @@ Possible decisions:
                     logger.info("롱 포지션 청산 시도")
                     order_qty = float(long_position['size'])
                     try:
-                        order = session.private().order_create(
+                        order = place_order(
                             symbol="BTCUSDT",
                             side="Sell",
-                            orderType="Market",
+                            order_type="Market",
                             qty=order_qty,
-                            timeInForce="GoodTillCancel",
-                            reduceOnly=True,
-                            closeOnTrigger=False
+                            leverage=1,  # 청산 시 레버리지 영향 없음
+                            reduce_only=True
                         )
-                        if order['retCode'] == 0:
+                        if order and order.get('retCode') == 0:
                             logger.info(f"롱 포지션 청산 성공: {order}")
                             order_executed = True
                         else:
-                            logger.error(f"롱 포지션 청산 실패: {order['retMsg']}")
+                            logger.error(f"롱 포지션 청산 실패: {order.get('retMsg') if order else 'No response'}")
                     except Exception as e:
                         logger.exception(f"롱 포지션 청산 중 오류 발생: {e}")
                 else:
@@ -626,13 +706,9 @@ Possible decisions:
                 leverage = max(1, min(int(leverage), 10))
                 try:
                     # 레버리지 설정
-                    response = session.private().set_leverage(
-                        symbol="BTCUSDT",
-                        buyLeverage=leverage,
-                        sellLeverage=leverage
-                    )
-                    if response['retCode'] != 0:
-                        logger.error(f"레버리지 설정 오류: {response['retMsg']}")
+                    response = set_leverage(symbol="BTCUSDT", leverage=leverage)
+                    if not response or response.get('retCode') != 0:
+                        logger.error(f"레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
                     logger.debug(f"레버리지 설정 완료: {leverage}x")
                 except Exception as e:
@@ -644,20 +720,19 @@ Possible decisions:
                     logger.info(f"숏 포지션 주문 시도: {percentage}%의 USDT와 {leverage}x 레버리지")
                     order_qty = round((position_size * leverage) / current_price, 6)
                     try:
-                        order = session.private().order_create(
+                        order = place_order(
                             symbol="BTCUSDT",
                             side="Sell",
-                            orderType="Market",
+                            order_type="Market",
                             qty=order_qty,
-                            timeInForce="GoodTillCancel",
-                            reduceOnly=False,
-                            closeOnTrigger=False
+                            leverage=leverage,
+                            reduce_only=False
                         )
-                        if order['retCode'] == 0:
+                        if order and order.get('retCode') == 0:
                             logger.info(f"숏 포지션 주문 성공: {order}")
                             order_executed = True
                         else:
-                            logger.error(f"숏 포지션 주문 실패: {order['retMsg']}")
+                            logger.error(f"숏 포지션 주문 실패: {order.get('retMsg') if order else 'No response'}")
                     except Exception as e:
                         logger.exception(f"숏 포지션 주문 중 오류 발생: {e}")
                 else:
@@ -668,20 +743,19 @@ Possible decisions:
                     logger.info("숏 포지션 청산 시도")
                     order_qty = float(short_position['size'])
                     try:
-                        order = session.private().order_create(
+                        order = place_order(
                             symbol="BTCUSDT",
                             side="Buy",
-                            orderType="Market",
+                            order_type="Market",
                             qty=order_qty,
-                            timeInForce="GoodTillCancel",
-                            reduceOnly=True,
-                            closeOnTrigger=False
+                            leverage=1,  # 청산 시 레버리지 영향 없음
+                            reduce_only=True
                         )
-                        if order['retCode'] == 0:
+                        if order and order.get('retCode') == 0:
                             logger.info(f"숏 포지션 청산 성공: {order}")
                             order_executed = True
                         else:
-                            logger.error(f"숏 포지션 청산 실패: {order['retMsg']}")
+                            logger.error(f"숏 포지션 청산 실패: {order.get('retMsg') if order else 'No response'}")
                     except Exception as e:
                         logger.exception(f"숏 포지션 청산 중 오류 발생: {e}")
                 else:
@@ -697,18 +771,18 @@ Possible decisions:
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
             try:
                 # 포지션 재조회
-                response = session.private().position_list(symbol="BTCUSDT")
-                if response['retCode'] != 0:
-                    logger.error(f"포지션 재조회 오류: {response['retMsg']}")
+                response = get_position("BTCUSDT")
+                if not response or response.get('retCode') != 0:
+                    logger.error(f"포지션 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
                 positions = response['result']['list']
                 long_position = next((p for p in positions if p['side'] == 'Buy'), None)
                 short_position = next((p for p in positions if p['side'] == 'Sell'), None)
 
                 # 잔고 재조회
-                response = session.private().wallet_balance(coin="USDT")
-                if response['retCode'] != 0:
-                    logger.error(f"잔고 재조회 오류: {response['retMsg']}")
+                response = get_wallet_balance("USDT")
+                if not response or response.get('retCode') != 0:
+                    logger.error(f"잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
                 usdt_balance = float(response['result']['USDT']['availableBalance'])
 
