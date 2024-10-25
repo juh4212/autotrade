@@ -16,12 +16,11 @@ from pymongo import MongoClient  # MongoDB 클라이언트 추가
 from urllib.parse import quote_plus  # 비밀번호 URL 인코딩을 위한 모듈
 # from selenium import webdriver  # 이미지 캡처가 필요하다면 주석 해제
 
-# 로깅 설정 - 로그 레벨을 DEBUG로 설정하고, 파일과 콘솔에 동시에 출력
+# 로깅 설정 - 로그 레벨을 DEBUG로 설정하고, 콘솔에만 출력
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("trading_bot_debug.log"),
         logging.StreamHandler()
     ]
 )
@@ -140,7 +139,7 @@ def generate_reflection(trades_df, current_market_data):
 
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
-        logger.error("OpenAI API key is missing or invalid.")
+        logger.error("OpenAI API key가 누락되었거나 유효하지 않습니다.")
         return None
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
@@ -357,7 +356,7 @@ def ai_trading():
     ### AI에게 데이터 제공하고 판단 받기
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
-        logger.error("OpenAI API key is missing or invalid.")
+        logger.error("OpenAI API key가 누락되었거나 유효하지 않습니다.")
         return None
     try:
         # 데이터베이스 연결
@@ -730,4 +729,3 @@ if __name__ == "__main__":
             time.sleep(1)
         except Exception as e:
             logger.exception(f"스케줄러 루프 중 오류 발생: {e}")
-
