@@ -73,12 +73,13 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None):
         logger.error(f"지원되지 않는 HTTP 메서드: {method}")
         return None
 
-def get_position(symbol):
+def get_position(symbol, category="linear"):
     """포지션 조회"""
     endpoint = "/v5/position/list"
     params = {
         "api_key": API_KEY,
         "symbol": symbol,
+        "category": category,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
         "recv_window": 5000
     }
@@ -97,7 +98,7 @@ def get_wallet_balance(coin="USDT"):
     params["sign"] = generate_signature(params, API_SECRET)
     return call_bybit_api(endpoint, method='GET', params=params)
 
-def place_order(symbol, side, order_type, qty, leverage=1, reduce_only=False):
+def place_order(symbol, side, order_type, qty, leverage=1, reduce_only=False, category="linear"):
     """주문 생성"""
     endpoint = "/v5/order/create"
     params = {
@@ -108,13 +109,14 @@ def place_order(symbol, side, order_type, qty, leverage=1, reduce_only=False):
         "qty": qty,
         "timeInForce": "GoodTillCancel",
         "reduceOnly": reduce_only,
+        "category": category,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
         "recv_window": 5000
     }
     params["sign"] = generate_signature(params, API_SECRET)
     return call_bybit_api(endpoint, method='POST', params=params, data=params)
 
-def set_leverage(symbol, leverage):
+def set_leverage(symbol, leverage, category="linear"):
     """레버리지 설정"""
     endpoint = "/v5/account/set-leverage"
     params = {
@@ -122,6 +124,7 @@ def set_leverage(symbol, leverage):
         "symbol": symbol,
         "buyLeverage": leverage,
         "sellLeverage": leverage,
+        "category": category,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
         "recv_window": 5000
     }
@@ -332,11 +335,11 @@ def get_fear_and_greed_index():
         return None
 
 # 가격 데이터 가져오기 함수 (Bybit V5 API 사용)
-def get_ohlcv(symbol, interval, limit):
+def get_ohlcv(symbol, interval, limit, category="linear"):
     logger.debug(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
     endpoint = "/v5/market/kline"
     params = {
-        "category": "linear",
+        "category": category,  # 필수 파라미터 추가
         "symbol": symbol,
         "interval": interval,
         "limit": limit
@@ -365,7 +368,7 @@ def ai_trading():
     # 1. 현재 포지션 조회 (Bybit V5 API 사용)
     try:
         logger.debug("현재 포지션 조회 시도")
-        response = get_position("BTCUSDT")
+        response = get_position("BTCUSDT", category="linear")
         logger.debug(f"포지션 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"포지션 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -396,7 +399,7 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.debug("오더북 조회 시도")
-        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": "BTCUSDT", "limit": 50})
+        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": "BTCUSDT", "limit": 50, "category": "linear"})
         logger.debug(f"오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -411,7 +414,7 @@ def ai_trading():
     # 4. 차트 데이터 조회 및 보조지표 추가 (Bybit V5 API 사용)
     try:
         logger.debug("차트 데이터 조회 시도 - 일일 데이터")
-        df_daily = get_ohlcv("BTCUSDT", interval="D", limit=180)
+        df_daily = get_ohlcv("BTCUSDT", interval="D", limit=180, category="linear")
         if df_daily is None:
             logger.error("일일 OHLCV 데이터 조회 실패")
             return
@@ -419,7 +422,7 @@ def ai_trading():
         df_daily = add_indicators(df_daily)
         
         logger.debug("차트 데이터 조회 시도 - 시간별 데이터")
-        df_hourly = get_ohlcv("BTCUSDT", interval="60", limit=168)  # 7 days of hourly data
+        df_hourly = get_ohlcv("BTCUSDT", interval="60", limit=168, category="linear")  # 7 days of hourly data
         if df_hourly is None:
             logger.error("시간별 OHLCV 데이터 조회 실패")
             return
@@ -624,7 +627,7 @@ Possible decisions:
         # 현재 가격 가져오기 (Bybit V5 API 사용)
         try:
             logger.debug("현재 가격 데이터 조회 시도")
-            response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": "BTCUSDT"})
+            response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": "BTCUSDT", "category": "linear"})
             if not response or response.get('retCode') != 0:
                 logger.error(f"현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
                 return
@@ -644,7 +647,7 @@ Possible decisions:
                 leverage = max(1, min(int(leverage), 10))
                 try:
                     # 레버리지 설정
-                    response = set_leverage(symbol="BTCUSDT", leverage=leverage)
+                    response = set_leverage(symbol="BTCUSDT", leverage=leverage, category="linear")
                     if not response or response.get('retCode') != 0:
                         logger.error(f"레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
@@ -664,7 +667,8 @@ Possible decisions:
                             order_type="Market",
                             qty=order_qty,
                             leverage=leverage,
-                            reduce_only=False
+                            reduce_only=False,
+                            category="linear"
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"롱 포지션 주문 성공: {order}")
@@ -687,7 +691,8 @@ Possible decisions:
                             order_type="Market",
                             qty=order_qty,
                             leverage=1,  # 청산 시 레버리지 영향 없음
-                            reduce_only=True
+                            reduce_only=True,
+                            category="linear"
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"롱 포지션 청산 성공: {order}")
@@ -706,7 +711,7 @@ Possible decisions:
                 leverage = max(1, min(int(leverage), 10))
                 try:
                     # 레버리지 설정
-                    response = set_leverage(symbol="BTCUSDT", leverage=leverage)
+                    response = set_leverage(symbol="BTCUSDT", leverage=leverage, category="linear")
                     if not response or response.get('retCode') != 0:
                         logger.error(f"레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
@@ -726,7 +731,8 @@ Possible decisions:
                             order_type="Market",
                             qty=order_qty,
                             leverage=leverage,
-                            reduce_only=False
+                            reduce_only=False,
+                            category="linear"
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"숏 포지션 주문 성공: {order}")
@@ -749,7 +755,8 @@ Possible decisions:
                             order_type="Market",
                             qty=order_qty,
                             leverage=1,  # 청산 시 레버리지 영향 없음
-                            reduce_only=True
+                            reduce_only=True,
+                            category="linear"
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"숏 포지션 청산 성공: {order}")
@@ -771,7 +778,7 @@ Possible decisions:
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
             try:
                 # 포지션 재조회
-                response = get_position("BTCUSDT")
+                response = get_position("BTCUSDT", category="linear")
                 if not response or response.get('retCode') != 0:
                     logger.error(f"포지션 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
