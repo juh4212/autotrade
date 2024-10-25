@@ -8,8 +8,7 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-# 선물 거래용 HTTP 클래스 임포트
-from pybit.usdt_perpetual import HTTP
+from pybit.usdt_perpetual import HTTP  # 선물 거래용 HTTP 클래스 임포트
 import openai
 import ta
 from ta.utils import dropna
@@ -33,7 +32,7 @@ session = HTTP(
     api_secret=api_secret
 )
 
-# MongoDB 연결 설정 (변경 없음)
+# MongoDB 연결 설정
 def init_db():
     mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     client = MongoClient(mongo_uri)
@@ -41,7 +40,7 @@ def init_db():
     trades_collection = db['trades']
     return trades_collection
 
-# 거래 기록을 DB에 저장하는 함수 (변경 없음)
+# 거래 기록을 DB에 저장하는 함수
 def log_trade(trades_collection, decision, percentage, reason, btc_balance,
               usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
     trade = {
@@ -57,7 +56,7 @@ def log_trade(trades_collection, decision, percentage, reason, btc_balance,
     }
     trades_collection.insert_one(trade)
 
-# 최근 투자 기록 조회 (변경 없음)
+# 최근 투자 기록 조회
 def get_recent_trades(trades_collection, days=7):
     seven_days_ago = datetime.now() - timedelta(days=days)
     cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago}}).sort(
@@ -68,7 +67,7 @@ def get_recent_trades(trades_collection, days=7):
         trades_df['timestamp'] = pd.to_datetime(trades_df['timestamp'])
     return trades_df
 
-# 최근 투자 기록을 기반으로 퍼포먼스 계산 (변경 없음)
+# 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
 def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
@@ -80,7 +79,7 @@ def calculate_performance(trades_df):
         'btc_balance'] * trades_df.iloc[0]['btc_usdt_price']
     return (final_balance - initial_balance) / initial_balance * 100
 
-# AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수 (변경 없음)
+# AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
@@ -129,7 +128,7 @@ Limit your response to 250 words or less.
         logger.error(f"Error extracting response content: {e}")
         return None
 
-# 데이터프레임에 보조 지표를 추가하는 함수 (변경 없음)
+# 데이터프레임에 보조 지표를 추가하는 함수
 def add_indicators(df):
     # 볼린저 밴드 추가
     indicator_bb = ta.volatility.BollingerBands(
@@ -181,7 +180,7 @@ def add_indicators(df):
 
     return df
 
-# 공포 탐욕 지수 조회 (변경 없음)
+# 공포 탐욕 지수 조회
 def get_fear_and_greed_index():
     url = "https://api.alternative.me/fng/"
     try:
@@ -193,7 +192,7 @@ def get_fear_and_greed_index():
         logger.error(f"Error fetching Fear and Greed Index: {e}")
         return None
 
-# 뉴스 데이터 가져오기 (변경 없음)
+# 뉴스 데이터 가져오기
 def get_bitcoin_news():
     serpapi_key = os.getenv("SERPAPI_API_KEY")
     if not serpapi_key:
@@ -224,7 +223,7 @@ def get_bitcoin_news():
         logger.error(f"Error fetching news: {e}")
         return []
 
-# 가격 데이터 가져오기 함수 (Bybit용) (변경 없음)
+# 가격 데이터 가져오기 함수 (Bybit용)
 def get_ohlcv(symbol, interval, limit):
     url = "https://api.bybit.com/v5/market/kline"
     params = {
@@ -274,7 +273,7 @@ def ai_trading():
         logger.error(f"Error fetching wallet balance: {e}")
         return
 
-    # 3. 오더북(호가 데이터) 조회 (변경 없음)
+    # 3. 오더북(호가 데이터) 조회
     try:
         orderbook_response = session.orderbook(symbol="BTCUSDT")
         orderbook = orderbook_response['result']
@@ -282,7 +281,7 @@ def ai_trading():
         logger.error(f"Error fetching orderbook: {e}")
         orderbook = None
 
-    # 4. 차트 데이터 조회 및 보조지표 추가 (변경 없음)
+    # 4. 차트 데이터 조회 및 보조지표 추가
     df_daily = get_ohlcv("BTCUSDT", interval="D", limit=180)
     if df_daily is None:
         logger.error("Failed to retrieve daily OHLCV data.")
@@ -301,10 +300,10 @@ def ai_trading():
     df_daily_recent = df_daily.tail(60)
     df_hourly_recent = df_hourly.tail(48)
 
-    # 5. 공포 탐욕 지수 가져오기 (변경 없음)
+    # 5. 공포 탐욕 지수 가져오기
     fear_greed_index = get_fear_and_greed_index()
 
-    # 6. 뉴스 헤드라인 가져오기 (변경 없음)
+    # 6. 뉴스 헤드라인 가져오기
     news_headlines = get_bitcoin_news()
 
     ### AI에게 데이터 제공하고 판단 받기
@@ -336,19 +335,35 @@ def ai_trading():
         examples = """
 Example Response 1:
 {
-  "decision": "long",
+  "decision": "open_long",
   "percentage": 50,
-  "reason": "Based on the current market indicators and positive news, it's a good opportunity to go long."
+  "leverage": 5,
+  "reason": "Based on the current market indicators and positive news, it's a good opportunity to open a long position."
 }
 
 Example Response 2:
 {
-  "decision": "short",
-  "percentage": 30,
-  "reason": "Due to negative trends in the market and high fear index, it is advisable to open a short position."
+  "decision": "close_long",
+  "percentage": 100,
+  "reason": "As we are currently holding a long position and market indicators suggest a reversal, it is advisable to close the long position."
 }
 
 Example Response 3:
+{
+  "decision": "open_short",
+  "percentage": 30,
+  "leverage": 3,
+  "reason": "Due to negative trends in the market and high fear index, it is advisable to open a short position."
+}
+
+Example Response 4:
+{
+  "decision": "close_short",
+  "percentage": 100,
+  "reason": "As we are currently holding a short position and market indicators suggest an uptrend, it is advisable to close the short position."
+}
+
+Example Response 5:
 {
   "decision": "hold",
   "percentage": 0,
@@ -361,7 +376,7 @@ Example Response 3:
             messages=[
                 {
                     "role": "user",
-                    "content": f"""You are an expert in Bitcoin futures trading. This analysis is performed every 4 hours. Analyze the provided data and determine whether to go long, short, or hold at the current moment. Consider the following in your analysis:
+                    "content": f"""You are an expert in Bitcoin futures trading. This analysis is performed every 4 hours. Analyze the provided data and determine the best action at the current moment. Consider the following in your analysis:
 
 - Technical indicators and market data
 - Recent news headlines and their potential impact on Bitcoin price
@@ -374,12 +389,24 @@ Recent trading reflection:
 
 Based on your analysis, make a decision and provide your reasoning.
 
+Possible decisions:
+- "open_long": Open a new long position
+- "close_long": Close the existing long position
+- "open_short": Open a new short position
+- "close_short": Close the existing short position
+- "hold": Do nothing
+
+Include the leverage (an integer between 1 and 10) when opening a new position.
+
 Please provide your response in the following JSON format:
 
 {examples}
 
-Ensure that the percentage is an integer between 1 and 100 for long/short decisions, and exactly 0 for hold decisions.
-Your percentage should reflect the strength of your conviction in the decision based on the analyzed data.
+Ensure that:
+- The percentage is an integer between 1 and 100.
+- Leverage is an integer between 1 and 10 when opening a new position.
+- Leverage is omitted when closing a position or holding.
+- Your reasoning is concise and based on the analyzed data.
 """
                 },
                 {
@@ -409,9 +436,10 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                     parsed_json = json.loads(json_str)
                     decision = parsed_json.get('decision')
                     percentage = parsed_json.get('percentage')
+                    leverage = parsed_json.get('leverage')  # 레버리지 추가
                     reason = parsed_json.get('reason')
                     return {'decision': decision, 'percentage': percentage,
-                            'reason': reason}
+                            'leverage': leverage, 'reason': reason}
                 else:
                     logger.error("No JSON found in AI response.")
                     return None
@@ -426,14 +454,17 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
 
         decision = parsed_response.get('decision')
         percentage = parsed_response.get('percentage')
+        leverage = parsed_response.get('leverage')
         reason = parsed_response.get('reason')
 
-        if not decision or reason is None:
+        if not decision or reason is None or percentage is None:
             logger.error("Incomplete data in AI response.")
             return
 
         logger.info(f"AI Decision: {decision.upper()}")
         logger.info(f"Percentage: {percentage}")
+        if leverage:
+            logger.info(f"Leverage: {leverage}")
         logger.info(f"Decision Reason: {reason}")
 
         order_executed = False
@@ -443,12 +474,18 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
         current_price = float(current_price_data['result'][0]['last_price'])
 
         # 주문 실행
-        if decision == "long":
+        if decision == "open_long":
+            # 레버리지 확인
+            if leverage is None:
+                logger.error("Leverage is required when opening a new position.")
+                return
+            leverage = max(1, min(int(leverage), 10))
+            session.set_leverage(symbol="BTCUSDT", buy_leverage=leverage, sell_leverage=leverage)
             position_size = usdt_balance * (int(percentage) / 100) * 0.9995  # 수수료 고려
             if position_size > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
-                logger.info(f"Placing LONG order: {percentage}% of available USDT")
+                logger.info(f"Placing LONG order: {percentage}% of available USDT with leverage {leverage}x")
                 try:
-                    order_qty = round(position_size / current_price, 6)  # 소수점 자리수는 거래소에 따라 조정
+                    order_qty = round((position_size * leverage) / current_price, 6)  # 레버리지 적용
                     order = session.place_active_order(
                         symbol="BTCUSDT",
                         side="Buy",
@@ -467,12 +504,41 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                     logger.error(f"Error executing long order: {e}")
             else:
                 logger.warning("Long Order Failed: Insufficient USDT (less than minimum required)")
-        elif decision == "short":
+        elif decision == "close_long":
+            # 롱 포지션 청산 로직
+            if long_position and float(long_position['size']) > 0:
+                order_qty = float(long_position['size'])
+                try:
+                    order = session.place_active_order(
+                        symbol="BTCUSDT",
+                        side="Sell",
+                        order_type="Market",
+                        qty=order_qty,
+                        time_in_force="GoodTillCancel",
+                        reduce_only=True,
+                        close_on_trigger=False
+                    )
+                    if order['ret_code'] == 0:
+                        logger.info(f"Closed long position successfully: {order}")
+                        order_executed = True
+                    else:
+                        logger.error(f"Failed to close long position: {order['ret_msg']}")
+                except Exception as e:
+                    logger.error(f"Error closing long position: {e}")
+            else:
+                logger.info("No long position to close.")
+        elif decision == "open_short":
+            # 레버리지 확인
+            if leverage is None:
+                logger.error("Leverage is required when opening a new position.")
+                return
+            leverage = max(1, min(int(leverage), 10))
+            session.set_leverage(symbol="BTCUSDT", buy_leverage=leverage, sell_leverage=leverage)
             position_size = usdt_balance * (int(percentage) / 100) * 0.9995  # 수수료 고려
             if position_size > 10:
-                logger.info(f"Placing SHORT order: {percentage}% of available USDT")
+                logger.info(f"Placing SHORT order: {percentage}% of available USDT with leverage {leverage}x")
                 try:
-                    order_qty = round(position_size / current_price, 6)
+                    order_qty = round((position_size * leverage) / current_price, 6)
                     order = session.place_active_order(
                         symbol="BTCUSDT",
                         side="Sell",
@@ -491,6 +557,29 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                     logger.error(f"Error executing short order: {e}")
             else:
                 logger.warning("Short Order Failed: Insufficient USDT (less than minimum required)")
+        elif decision == "close_short":
+            # 숏 포지션 청산 로직
+            if short_position and float(short_position['size']) > 0:
+                order_qty = float(short_position['size'])
+                try:
+                    order = session.place_active_order(
+                        symbol="BTCUSDT",
+                        side="Buy",
+                        order_type="Market",
+                        qty=order_qty,
+                        time_in_force="GoodTillCancel",
+                        reduce_only=True,
+                        close_on_trigger=False
+                    )
+                    if order['ret_code'] == 0:
+                        logger.info(f"Closed short position successfully: {order}")
+                        order_executed = True
+                    else:
+                        logger.error(f"Failed to close short position: {order['ret_msg']}")
+                except Exception as e:
+                    logger.error(f"Error closing short position: {e}")
+            else:
+                logger.info("No short position to close.")
         elif decision == "hold":
             logger.info("Decision is to hold. No action taken.")
         else:
