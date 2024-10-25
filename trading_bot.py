@@ -13,6 +13,7 @@ import openai
 import ta
 from ta.utils import dropna
 from pymongo import MongoClient  # MongoDB 클라이언트 추가
+from urllib.parse import quote_plus  # 비밀번호 URL 인코딩을 위한 모듈
 
 # 로깅 설정 - 로그 레벨을 INFO로 설정하여 중요 정보 출력
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +35,19 @@ session = HTTP(
 
 # MongoDB 연결 설정
 def init_db():
-    mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    # 환경 변수에서 MongoDB 비밀번호 가져오기
+    db_password = os.getenv("MONGODB_PASSWORD")
+    if not db_password:
+        logger.error("MongoDB password not found. Please set the MONGODB_PASSWORD environment variable.")
+        raise ValueError("Missing MongoDB password.")
+
+    # 비밀번호를 URL 인코딩
+    encoded_password = quote_plus(db_password)
+
+    # MongoDB Atlas 연결 문자열 구성
+    mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster1.tbzg2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster1"
+
+    # MongoDB 클라이언트 생성
     client = MongoClient(mongo_uri)
     db = client['bitcoin_trades_db']
     trades_collection = db['trades']
@@ -646,4 +659,3 @@ if __name__ == "__main__":
     while True:
         schedule.run_pending()
         time.sleep(1)
-
