@@ -86,12 +86,13 @@ def get_position(symbol, category="linear"):
     params["sign"] = generate_signature(params, API_SECRET)
     return call_bybit_api(endpoint, method='GET', params=params)
 
-def get_wallet_balance(coin="USDT"):
+def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
     """잔고 조회"""
     endpoint = "/v5/account/wallet-balance"
     params = {
         "api_key": API_KEY,
         "coin": coin,
+        "account_type": account_type,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
         "recv_window": 5000
     }
@@ -385,7 +386,7 @@ def ai_trading():
     # 2. 현재 잔고 조회 (Bybit V5 API 사용)
     try:
         logger.debug("현재 잔고 조회 시도")
-        response = get_wallet_balance("USDT")
+        response = get_wallet_balance("USDT", account_type="CONTRACT")
         logger.debug(f"잔고 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"잔고 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -787,7 +788,7 @@ Possible decisions:
                 short_position = next((p for p in positions if p['side'] == 'Sell'), None)
 
                 # 잔고 재조회
-                response = get_wallet_balance("USDT")
+                response = get_wallet_balance("USDT", account_type="CONTRACT")
                 if not response or response.get('retCode') != 0:
                     logger.error(f"잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
