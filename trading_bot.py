@@ -713,17 +713,16 @@ if __name__ == "__main__":
             trading_in_progress = False
             logger.debug("트레이딩 작업 종료")
 
-# 매 1분마다 실행 (테스트 용도)
-schedule.every(1).minutes.do(job)
+    # 매 1분마다 실행 (테스트 용도)
+    schedule.every(1).minutes.do(job)
 
-# 원래 스케줄은 주석 처리하거나 제거
-# schedule.every().day.at("00:00").do(job)
-# schedule.every().day.at("04:00").do(job)
-# schedule.every().day.at("08:00").do(job)
-# schedule.every().day.at("12:00").do(job)
-# schedule.every().day.at("16:00").do(job)
-# schedule.every().day.at("20:00").do(job)
-
+    # 원래 스케줄은 주석 처리하거나 제거
+    # schedule.every().day.at("00:00").do(job)
+    # schedule.every().day.at("04:00").do(job)
+    # schedule.every().day.at("08:00").do(job)
+    # schedule.every().day.at("12:00").do(job)
+    # schedule.every().day.at("16:00").do(job)
+    # schedule.every().day.at("20:00").do(job)
 
     logger.debug("스케줄러 설정 완료")
 
