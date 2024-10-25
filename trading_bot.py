@@ -14,6 +14,7 @@ import ta
 from ta.utils import dropna
 from pymongo import MongoClient  # MongoDB 클라이언트 추가
 from urllib.parse import quote_plus  # 비밀번호 URL 인코딩을 위한 모듈
+# from selenium import webdriver  # 이미지 캡처가 필요하다면 주석 해제
 
 # 로깅 설정 - 로그 레벨을 INFO로 설정하여 중요 정보 출력
 logging.basicConfig(level=logging.INFO)
@@ -72,8 +73,7 @@ def log_trade(trades_collection, decision, percentage, reason, btc_balance,
 # 최근 투자 기록 조회
 def get_recent_trades(trades_collection, days=7):
     seven_days_ago = datetime.now() - timedelta(days=days)
-    cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago}}).sort(
-        "timestamp", -1)
+    cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago}}).sort("timestamp", -1)
     trades = list(cursor)
     trades_df = pd.DataFrame(trades)
     if not trades_df.empty:
@@ -85,11 +85,9 @@ def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
     # 초기 잔고 계산 (USDT + BTC * 당시 가격)
-    initial_balance = trades_df.iloc[-1]['usdt_balance'] + trades_df.iloc[-1][
-        'btc_balance'] * trades_df.iloc[-1]['btc_usdt_price']
+    initial_balance = trades_df.iloc[-1]['usdt_balance'] + trades_df.iloc[-1]['btc_balance'] * trades_df.iloc[-1]['btc_usdt_price']
     # 최종 잔고 계산
-    final_balance = trades_df.iloc[0]['usdt_balance'] + trades_df.iloc[0][
-        'btc_balance'] * trades_df.iloc[0]['btc_usdt_price']
+    final_balance = trades_df.iloc[0]['usdt_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_usdt_price']
     return (final_balance - initial_balance) / initial_balance * 100
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
@@ -103,13 +101,11 @@ def generate_reflection(trades_df, current_market_data):
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4",  # 모델 변경: o1-preview -> gpt-4
         messages=[
             {
-                "role": "user",
-                "content": "You are an AI trading assistant tasked with analyzing "
-                           "recent trading performance and current market conditions "
-                           "to generate insights and improvements for future trading decisions."
+                "role": "system",
+                "content": "당신은 비트코인 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
             },
             {
                 "role": "user",
@@ -144,15 +140,13 @@ Limit your response to 250 words or less.
 # 데이터프레임에 보조 지표를 추가하는 함수
 def add_indicators(df):
     # 볼린저 밴드 추가
-    indicator_bb = ta.volatility.BollingerBands(
-        close=df['close'], window=20, window_dev=2)
+    indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
     df['bb_bbm'] = indicator_bb.bollinger_mavg()
     df['bb_bbh'] = indicator_bb.bollinger_hband()
     df['bb_bbl'] = indicator_bb.bollinger_lband()
 
     # RSI (Relative Strength Index) 추가
-    df['rsi'] = ta.momentum.RSIIndicator(
-        close=df['close'], window=14).rsi()
+    df['rsi'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
 
     # MACD (Moving Average Convergence Divergence) 추가
     macd = ta.trend.MACD(close=df['close'])
@@ -161,10 +155,8 @@ def add_indicators(df):
     df['macd_diff'] = macd.macd_diff()
 
     # 이동평균선 (단기, 장기)
-    df['sma_20'] = ta.trend.SMAIndicator(
-        close=df['close'], window=20).sma_indicator()
-    df['ema_12'] = ta.trend.EMAIndicator(
-        close=df['close'], window=12).ema_indicator()
+    df['sma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
+    df['ema_12'] = ta.trend.EMAIndicator(close=df['close'], window=12).ema_indicator()
 
     # Stochastic Oscillator 추가
     stoch = ta.momentum.StochasticOscillator(
@@ -205,37 +197,6 @@ def get_fear_and_greed_index():
         logger.error(f"Error fetching Fear and Greed Index: {e}")
         return None
 
-# 뉴스 데이터 가져오기
-def get_bitcoin_news():
-    serpapi_key = os.getenv("SERPAPI_API_KEY")
-    if not serpapi_key:
-        logger.error("SERPAPI API key is missing.")
-        return []  # 빈 리스트 반환
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_news",
-        "q": "bitcoin OR btc",
-        "api_key": serpapi_key
-    }
-
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        news_results = data.get("news_results", [])
-        headlines = []
-        for item in news_results:
-            headlines.append({
-                "title": item.get("title", ""),
-                "date": item.get("date", "")
-            })
-
-        return headlines[:5]
-    except requests.RequestException as e:
-        logger.error(f"Error fetching news: {e}")
-        return []
-
 # 가격 데이터 가져오기 함수 (Bybit용)
 def get_ohlcv(symbol, interval, limit):
     url = "https://api.bybit.com/v5/market/kline"
@@ -253,9 +214,7 @@ def get_ohlcv(symbol, interval, limit):
             logger.error(f"Error fetching OHLCV data: {data['retMsg']}")
             return None
         records = data["result"]["list"]
-        df = pd.DataFrame(records, columns=[
-            "timestamp", "open", "high", "low", "close", "volume", "turnover"
-        ])
+        df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
         df = df.astype(float)
@@ -316,8 +275,8 @@ def ai_trading():
     # 5. 공포 탐욕 지수 가져오기
     fear_greed_index = get_fear_and_greed_index()
 
-    # 6. 뉴스 헤드라인 가져오기
-    news_headlines = get_bitcoin_news()
+    # 6. 뉴스 데이터 가져오기 (필요 시 활성화)
+    # image_data = capture_chart()  # 이미지 캡처 함수 호출 (필요 시 활성화)
 
     ### AI에게 데이터 제공하고 판단 받기
     openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -334,10 +293,10 @@ def ai_trading():
         # 현재 시장 데이터 수집
         current_market_data = {
             "fear_greed_index": fear_greed_index,
-            "news_headlines": news_headlines,
             "orderbook": orderbook,
-            "daily_ohlcv": df_daily_recent.to_dict(),
-            "hourly_ohlcv": df_hourly_recent.to_dict()
+            "daily_ohlcv": df_daily_recent.describe().to_dict(),  # 요약 통계로 대체
+            "hourly_ohlcv": df_hourly_recent.describe().to_dict()  # 요약 통계로 대체
+            # "chart_image": encoded_image  # 이미지 데이터 포함 (필요 시 추가)
         }
 
         # 반성 및 개선 내용 생성
@@ -351,14 +310,14 @@ Example Response 1:
   "decision": "open_long",
   "percentage": 50,
   "leverage": 5,
-  "reason": "Based on the current market indicators and positive news, it's a good opportunity to open a long position."
+  "reason": "기술 지표와 시장 상황을 고려할 때, 롱 포지션을 여는 것이 유리합니다."
 }
 
 Example Response 2:
 {
   "decision": "close_long",
   "percentage": 100,
-  "reason": "As we are currently holding a long position and market indicators suggest a reversal, it is advisable to close the long position."
+  "reason": "현재 롱 포지션을 보유 중이며, 시장 지표가 반전을 시사하여 롱 포지션을 청산하는 것이 바람직합니다."
 }
 
 Example Response 3:
@@ -366,74 +325,66 @@ Example Response 3:
   "decision": "open_short",
   "percentage": 30,
   "leverage": 3,
-  "reason": "Due to negative trends in the market and high fear index, it is advisable to open a short position."
+  "reason": "시장 트렌드가 부정적으로 전개되고 공포 지수가 높아 숏 포지션을 여는 것이 유리합니다."
 }
 
 Example Response 4:
 {
   "decision": "close_short",
   "percentage": 100,
-  "reason": "As we are currently holding a short position and market indicators suggest an uptrend, it is advisable to close the short position."
+  "reason": "현재 숏 포지션을 보유 중이며, 시장 지표가 상승 추세를 시사하여 숏 포지션을 청산하는 것이 바람직합니다."
 }
 
 Example Response 5:
 {
   "decision": "hold",
   "percentage": 0,
-  "reason": "Market indicators are neutral; it's best to wait for a clearer signal."
+  "reason": "시장 지표가 중립적이어서 명확한 신호가 없으므로 관망하는 것이 좋습니다."
 }
 """
 
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"""You are an expert in Bitcoin futures trading. This analysis is performed every 4 hours. Analyze the provided data and determine the best action at the current moment. Consider the following in your analysis:
-
-- Technical indicators and market data
-- Recent news headlines and their potential impact on Bitcoin price
-- The Fear and Greed Index and its implications
-- Overall market sentiment
-- Recent trading performance and reflection
-
-Recent trading reflection:
-{reflection}
-
-Based on your analysis, make a decision and provide your reasoning.
-
+        # 메시지 구성
+        messages = [
+            {
+                "role": "system",
+                "content": "당신은 비트코인 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
+            },
+            {
+                "role": "user",
+                "content": f"""
 Possible decisions:
-- "open_long": Open a new long position
-- "close_long": Close the existing long position
-- "open_short": Open a new short position
-- "close_short": Close the existing short position
-- "hold": Do nothing
+- "open_long": 롱 포지션 열기
+- "close_long": 롱 포지션 청산
+- "open_short": 숏 포지션 열기
+- "close_short": 숏 포지션 청산
+- "hold": 관망하기
 
-Include the leverage (an integer between 1 and 10) when opening a new position.
+레버리지는 1에서 10 사이의 정수로 설정하며, 새로운 포지션을 열 때만 포함합니다.
 
-Please provide your response in the following JSON format:
+다음과 같은 JSON 형식으로 응답하세요:
 
 {examples}
 
-Ensure that:
-- The percentage is an integer between 1 and 100.
-- Leverage is an integer between 1 and 10 when opening a new position.
-- Leverage is omitted when closing a position or holding.
-- Your reasoning is concise and based on the analyzed data.
+투자 판단을 내려주세요.
 """
-                },
-                {
-                    "role": "user",
-                    "content": f"""Current positions: Long - {long_position}, Short - {short_position}
-Available USDT balance: {usdt_balance}
-Orderbook: {json.dumps(orderbook)}
-Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json()}
-Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json()}
-Recent news headlines: {json.dumps(news_headlines)}
-Fear and Greed Index: {json.dumps(fear_greed_index)}
+            },
+            {
+                "role": "user",
+                "content": f"""
+현재 포지션: 롱 - {long_position}, 숏 - {short_position}
+사용 가능한 USDT 잔고: {usdt_balance}
+오더북 요약: {json.dumps(orderbook_summary)}
+일일 OHLCV 요약: {daily_ohlcv_summary}
+시간별 OHLCV 요약: {hourly_ohlcv_summary}
+공포 탐욕 지수: {json.dumps(fear_greed_index)}
 """
-                }
-            ]
+            }
+        ]
+
+        response = openai.ChatCompletion.create(
+            model="gpt-4",  # 모델 변경: o1-preview -> gpt-4
+            messages=messages,
+            timeout=30  # 시간 초과 설정
         )
 
         response_text = response.choices[0].message.content
@@ -441,23 +392,29 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
         # AI 응답 파싱
         def parse_ai_response(response_text):
             try:
-                # Extract JSON part from the response
+                # JSON 부분 추출
                 json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
                 if json_match:
                     json_str = json_match.group(0)
-                    # Parse JSON
                     parsed_json = json.loads(json_str)
                     decision = parsed_json.get('decision')
                     percentage = parsed_json.get('percentage')
-                    leverage = parsed_json.get('leverage')  # 레버리지 추가
+                    leverage = parsed_json.get('leverage')
                     reason = parsed_json.get('reason')
-                    return {'decision': decision, 'percentage': percentage,
-                            'leverage': leverage, 'reason': reason}
+                    return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
                 else:
-                    logger.error("No JSON found in AI response.")
-                    return None
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing error: {e}")
+                    # JSON 형식이 아닐 경우 텍스트에서 정보 추출
+                    decision_match = re.search(r'Decision:\s*(\w+)', response_text, re.IGNORECASE)
+                    percentage_match = re.search(r'Percentage:\s*(\d+)', response_text, re.IGNORECASE)
+                    leverage_match = re.search(r'Leverage:\s*(\d+)', response_text, re.IGNORECASE)
+                    reason_match = re.search(r'Reason:\s*(.*)', response_text, re.IGNORECASE)
+                    decision = decision_match.group(1) if decision_match else None
+                    percentage = int(percentage_match.group(1)) if percentage_match else None
+                    leverage = int(leverage_match.group(1)) if leverage_match else None
+                    reason = reason_match.group(1).strip() if reason_match else None
+                    return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
+            except Exception as e:
+                logger.error(f"Error parsing AI response: {e}")
                 return None
 
         parsed_response = parse_ai_response(response_text)
