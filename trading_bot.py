@@ -8,7 +8,8 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from pybit import HTTP
+# 선물 거래용 HTTP 클래스 임포트
+from pybit.usdt_perpetual import HTTP
 import openai
 import ta
 from ta.utils import dropna
@@ -25,14 +26,14 @@ if not api_key or not api_secret:
     logger.error("API keys not found. Please check your environment variables.")
     raise ValueError("Missing API keys. Please check your environment variables.")
 
-# Bybit REST API 세션 생성
+# Bybit REST API 세션 생성 (USDT 선물)
 session = HTTP(
     endpoint="https://api.bybit.com",  # 실제 거래를 위한 엔드포인트
     api_key=api_key,
     api_secret=api_secret
 )
 
-# MongoDB 연결 설정
+# MongoDB 연결 설정 (변경 없음)
 def init_db():
     mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     client = MongoClient(mongo_uri)
@@ -40,7 +41,7 @@ def init_db():
     trades_collection = db['trades']
     return trades_collection
 
-# 거래 기록을 DB에 저장하는 함수
+# 거래 기록을 DB에 저장하는 함수 (변경 없음)
 def log_trade(trades_collection, decision, percentage, reason, btc_balance,
               usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
     trade = {
@@ -56,7 +57,7 @@ def log_trade(trades_collection, decision, percentage, reason, btc_balance,
     }
     trades_collection.insert_one(trade)
 
-# 최근 투자 기록 조회
+# 최근 투자 기록 조회 (변경 없음)
 def get_recent_trades(trades_collection, days=7):
     seven_days_ago = datetime.now() - timedelta(days=days)
     cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago}}).sort(
@@ -67,7 +68,7 @@ def get_recent_trades(trades_collection, days=7):
         trades_df['timestamp'] = pd.to_datetime(trades_df['timestamp'])
     return trades_df
 
-# 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
+# 최근 투자 기록을 기반으로 퍼포먼스 계산 (변경 없음)
 def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
@@ -79,7 +80,7 @@ def calculate_performance(trades_df):
         'btc_balance'] * trades_df.iloc[0]['btc_usdt_price']
     return (final_balance - initial_balance) / initial_balance * 100
 
-# AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
+# AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수 (변경 없음)
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
@@ -128,7 +129,7 @@ Limit your response to 250 words or less.
         logger.error(f"Error extracting response content: {e}")
         return None
 
-# 데이터프레임에 보조 지표를 추가하는 함수
+# 데이터프레임에 보조 지표를 추가하는 함수 (변경 없음)
 def add_indicators(df):
     # 볼린저 밴드 추가
     indicator_bb = ta.volatility.BollingerBands(
@@ -180,7 +181,7 @@ def add_indicators(df):
 
     return df
 
-# 공포 탐욕 지수 조회
+# 공포 탐욕 지수 조회 (변경 없음)
 def get_fear_and_greed_index():
     url = "https://api.alternative.me/fng/"
     try:
@@ -192,7 +193,7 @@ def get_fear_and_greed_index():
         logger.error(f"Error fetching Fear and Greed Index: {e}")
         return None
 
-# 뉴스 데이터 가져오기
+# 뉴스 데이터 가져오기 (변경 없음)
 def get_bitcoin_news():
     serpapi_key = os.getenv("SERPAPI_API_KEY")
     if not serpapi_key:
@@ -223,7 +224,7 @@ def get_bitcoin_news():
         logger.error(f"Error fetching news: {e}")
         return []
 
-# 가격 데이터 가져오기 함수 (Bybit용)
+# 가격 데이터 가져오기 함수 (Bybit용) (변경 없음)
 def get_ohlcv(symbol, interval, limit):
     url = "https://api.bybit.com/v5/market/kline"
     params = {
@@ -255,19 +256,25 @@ def get_ohlcv(symbol, interval, limit):
 def ai_trading():
     global session
     ### 데이터 가져오기
-    # 1. 현재 투자 상태 조회
+    # 1. 현재 포지션 조회 (선물 거래에 맞게 수정)
     try:
-        balances = session.get_wallet_balance(coin="")['result']['balances']
-        balances = {balance['coin']: balance for balance in balances}
-        filtered_balances = {
-            coin: balances.get(coin, {'free': 0, 'availableBalance': 0})
-            for coin in ['BTC', 'USDT']
-        }
+        positions = session.my_position(symbol="BTCUSDT")['result']
+        # 포지션 정보 파싱
+        long_position = next((p for p in positions if p['side'] == 'Buy'), None)
+        short_position = next((p for p in positions if p['side'] == 'Sell'), None)
     except Exception as e:
-        logger.error(f"Error fetching balances: {e}")
+        logger.error(f"Error fetching positions: {e}")
         return
 
-    # 2. 오더북(호가 데이터) 조회
+    # 2. 현재 잔고 조회 (선물 지갑 잔고)
+    try:
+        wallet_balance = session.get_wallet_balance()['result']['USDT']['available_balance']
+        usdt_balance = float(wallet_balance)
+    except Exception as e:
+        logger.error(f"Error fetching wallet balance: {e}")
+        return
+
+    # 3. 오더북(호가 데이터) 조회 (변경 없음)
     try:
         orderbook_response = session.orderbook(symbol="BTCUSDT")
         orderbook = orderbook_response['result']
@@ -275,7 +282,7 @@ def ai_trading():
         logger.error(f"Error fetching orderbook: {e}")
         orderbook = None
 
-    # 3. 차트 데이터 조회 및 보조지표 추가
+    # 4. 차트 데이터 조회 및 보조지표 추가 (변경 없음)
     df_daily = get_ohlcv("BTCUSDT", interval="D", limit=180)
     if df_daily is None:
         logger.error("Failed to retrieve daily OHLCV data.")
@@ -294,10 +301,10 @@ def ai_trading():
     df_daily_recent = df_daily.tail(60)
     df_hourly_recent = df_hourly.tail(48)
 
-    # 4. 공포 탐욕 지수 가져오기
+    # 5. 공포 탐욕 지수 가져오기 (변경 없음)
     fear_greed_index = get_fear_and_greed_index()
 
-    # 5. 뉴스 헤드라인 가져오기
+    # 6. 뉴스 헤드라인 가져오기 (변경 없음)
     news_headlines = get_bitcoin_news()
 
     ### AI에게 데이터 제공하고 판단 받기
@@ -312,7 +319,7 @@ def ai_trading():
         # 최근 거래 내역 가져오기
         recent_trades = get_recent_trades(trades_collection)
 
-        # 현재 시장 데이터 수집 (기존 코드에서 가져온 데이터 사용)
+        # 현재 시장 데이터 수집
         current_market_data = {
             "fear_greed_index": fear_greed_index,
             "news_headlines": news_headlines,
@@ -329,16 +336,16 @@ def ai_trading():
         examples = """
 Example Response 1:
 {
-  "decision": "buy",
+  "decision": "long",
   "percentage": 50,
-  "reason": "Based on the current market indicators and positive news, it's a good opportunity to invest."
+  "reason": "Based on the current market indicators and positive news, it's a good opportunity to go long."
 }
 
 Example Response 2:
 {
-  "decision": "sell",
+  "decision": "short",
   "percentage": 30,
-  "reason": "Due to negative trends in the market and high fear index, it is advisable to reduce holdings."
+  "reason": "Due to negative trends in the market and high fear index, it is advisable to open a short position."
 }
 
 Example Response 3:
@@ -354,7 +361,7 @@ Example Response 3:
             messages=[
                 {
                     "role": "user",
-                    "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
+                    "content": f"""You are an expert in Bitcoin futures trading. This analysis is performed every 4 hours. Analyze the provided data and determine whether to go long, short, or hold at the current moment. Consider the following in your analysis:
 
 - Technical indicators and market data
 - Recent news headlines and their potential impact on Bitcoin price
@@ -371,13 +378,14 @@ Please provide your response in the following JSON format:
 
 {examples}
 
-Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+Ensure that the percentage is an integer between 1 and 100 for long/short decisions, and exactly 0 for hold decisions.
 Your percentage should reflect the strength of your conviction in the decision based on the analyzed data.
 """
                 },
                 {
                     "role": "user",
-                    "content": f"""Current investment status: {json.dumps(filtered_balances)}
+                    "content": f"""Current positions: Long - {long_position}, Short - {short_position}
+Available USDT balance: {usdt_balance}
 Orderbook: {json.dumps(orderbook)}
 Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json()}
 Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json()}
@@ -432,76 +440,74 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
 
         # 현재 가격 가져오기
         current_price_data = session.latest_information_for_symbol(symbol="BTCUSDT")
-        current_price = float(current_price_data['result']['list'][0]['lastPrice'])
+        current_price = float(current_price_data['result'][0]['last_price'])
 
-        if decision == "buy":
-            my_usdt = float(filtered_balances['USDT']['availableBalance'])
-            if my_usdt is None:
-                logger.error("Failed to retrieve USDT balance.")
-                return
-            buy_amount_usdt = my_usdt * (int(percentage) / 100) * 0.9995  # 수수료 고려
-            if buy_amount_usdt > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
-                logger.info(f"Buy Order Executed: {percentage}% of available USDT")
+        # 주문 실행
+        if decision == "long":
+            position_size = usdt_balance * (int(percentage) / 100) * 0.9995  # 수수료 고려
+            if position_size > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
+                logger.info(f"Placing LONG order: {percentage}% of available USDT")
                 try:
-                    order_qty = round(buy_amount_usdt / current_price, 6)  # 소수점 자리수는 거래소에 따라 조정
-                    order = session.place_order(
-                        category="spot",
+                    order_qty = round(position_size / current_price, 6)  # 소수점 자리수는 거래소에 따라 조정
+                    order = session.place_active_order(
                         symbol="BTCUSDT",
                         side="Buy",
-                        orderType="Market",
-                        qty=str(order_qty),
-                        timeInForce="GTC"
+                        order_type="Market",
+                        qty=order_qty,
+                        time_in_force="GoodTillCancel",
+                        reduce_only=False,
+                        close_on_trigger=False
                     )
-                    if order['retCode'] == 0:
-                        logger.info(f"Buy order executed successfully: {order}")
+                    if order['ret_code'] == 0:
+                        logger.info(f"Long order executed successfully: {order}")
                         order_executed = True
                     else:
-                        logger.error(f"Buy order failed: {order['retMsg']}")
+                        logger.error(f"Long order failed: {order['ret_msg']}")
                 except Exception as e:
-                    logger.error(f"Error executing buy order: {e}")
+                    logger.error(f"Error executing long order: {e}")
             else:
-                logger.warning("Buy Order Failed: Insufficient USDT (less than minimum required)")
-        elif decision == "sell":
-            my_btc = float(filtered_balances['BTC']['availableBalance'])
-            if my_btc is None:
-                logger.error("Failed to retrieve BTC balance.")
-                return
-            sell_amount_btc = my_btc * (int(percentage) / 100) * 0.9995  # 수수료 고려
-            if sell_amount_btc * current_price > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
-                logger.info(f"Sell Order Executed: {percentage}% of held BTC")
+                logger.warning("Long Order Failed: Insufficient USDT (less than minimum required)")
+        elif decision == "short":
+            position_size = usdt_balance * (int(percentage) / 100) * 0.9995  # 수수료 고려
+            if position_size > 10:
+                logger.info(f"Placing SHORT order: {percentage}% of available USDT")
                 try:
-                    order_qty = round(sell_amount_btc, 6)  # 소수점 자리수는 거래소에 따라 조정
-                    order = session.place_order(
-                        category="spot",
+                    order_qty = round(position_size / current_price, 6)
+                    order = session.place_active_order(
                         symbol="BTCUSDT",
                         side="Sell",
-                        orderType="Market",
-                        qty=str(order_qty),
-                        timeInForce="GTC"
+                        order_type="Market",
+                        qty=order_qty,
+                        time_in_force="GoodTillCancel",
+                        reduce_only=False,
+                        close_on_trigger=False
                     )
-                    if order['retCode'] == 0:
-                        logger.info(f"Sell order executed successfully: {order}")
+                    if order['ret_code'] == 0:
+                        logger.info(f"Short order executed successfully: {order}")
                         order_executed = True
                     else:
-                        logger.error(f"Sell order failed: {order['retMsg']}")
+                        logger.error(f"Short order failed: {order['ret_msg']}")
                 except Exception as e:
-                    logger.error(f"Error executing sell order: {e}")
+                    logger.error(f"Error executing short order: {e}")
             else:
-                logger.warning("Sell Order Failed: Insufficient BTC (less than minimum required)")
+                logger.warning("Short Order Failed: Insufficient USDT (less than minimum required)")
         elif decision == "hold":
             logger.info("Decision is to hold. No action taken.")
         else:
             logger.error("Invalid decision received from AI.")
             return
 
-        # 거래 실행 여부와 관계없이 현재 잔고 조회
+        # 거래 실행 여부와 관계없이 현재 잔고 및 포지션 조회
         time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
         try:
-            balances = session.get_wallet_balance(coin="")['result']['balances']
-            balances = {balance['coin']: balance for balance in balances}
-            btc_balance = float(balances.get('BTC', {'availableBalance': 0})['availableBalance'])
-            usdt_balance = float(balances.get('USDT', {'availableBalance': 0})['availableBalance'])
-            btc_avg_buy_price = None  # Bybit에서는 평균 매수 단가를 직접 계산해야 함
+            positions = session.my_position(symbol="BTCUSDT")['result']
+            long_position = next((p for p in positions if p['side'] == 'Buy'), None)
+            short_position = next((p for p in positions if p['side'] == 'Sell'), None)
+            wallet_balance = session.get_wallet_balance()['result']['USDT']['available_balance']
+            usdt_balance = float(wallet_balance)
+            btc_balance = (float(long_position['size']) if long_position else 0) - \
+                          (float(short_position['size']) if short_position else 0)
+            btc_avg_buy_price = float(long_position['entry_price']) if long_position else None
             current_btc_price = current_price
 
             # 거래 기록을 DB에 저장하기
@@ -517,7 +523,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                 reflection
             )
         except Exception as e:
-            logger.error(f"Error fetching updated balances: {e}")
+            logger.error(f"Error fetching updated balances and positions: {e}")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
         return
@@ -551,3 +557,4 @@ if __name__ == "__main__":
     while True:
         schedule.run_pending()
         time.sleep(1)
+
