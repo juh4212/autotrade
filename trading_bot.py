@@ -193,11 +193,11 @@ def log_trade(trades_collection, symbol, decision, percentage, reason, btc_balan
         logger.exception(f"{symbol} 거래 기록 DB 저장 실패: {e}")
 
 # 최근 투자 기록 조회
-def get_recent_trades(trades_collection, symbol, days=7):
+def get_recent_trades(trades_collection, symbol, days=7, limit=50):
     logger.info(f"get_recent_trades 함수 시작 - {symbol}의 최근 {days}일간의 거래 내역 조회")
     seven_days_ago = datetime.now() - timedelta(days=days)
     try:
-        cursor = trades_collection.find({"symbol": symbol, "timestamp": {"$gte": seven_days_ago}}).sort("timestamp", -1)
+        cursor = trades_collection.find({"symbol": symbol, "timestamp": {"$gte": seven_days_ago}}).sort("timestamp", -1).limit(limit)
         trades = list(cursor)
         trades_df = pd.DataFrame(trades)
         if not trades_df.empty:
@@ -261,12 +261,10 @@ def generate_reflection(symbol, trades_df, current_market_data):
     try:
         # 프롬프트 최적화를 위해 예시 응답 간소화
         examples = """
-{
-  "decision": "hold",
-  "percentage": 20,
-  "leverage": 5,
-  "reason": "Market indicators are favorable, entering a long position with moderate leverage."
-}
+decision: hold
+percentage: 20
+leverage: 5
+reason: Market indicators are favorable, entering a long position with moderate leverage.
         """
 
         # 현재 포지션 상태 확인
@@ -279,37 +277,39 @@ def generate_reflection(symbol, trades_df, current_market_data):
         if current_position["long"]:
             possible_decisions = """
 Possible decisions:
-- "close_long": 롱 포지션 청산
-- "hold": 관망하기
+- close_long: 롱 포지션 청산
+- hold: 관망하기
 """
         elif current_position["short"]:
             possible_decisions = """
 Possible decisions:
-- "close_short": 숏 포지션 청산
-- "hold": 관망하기
+- close_short: 숏 포지션 청산
+- hold: 관망하기
 """
         else:
             possible_decisions = """
 Possible decisions:
-- "open_long": 롱 포지션 열기
-- "open_short": 숏 포지션 열기
-- "hold": 관망하기
+- open_long: 롱 포지션 열기
+- open_short: 숏 포지션 열기
+- hold: 관망하기
 """
 
         # 퍼포먼스 기반 포지션 크기 조정
         adjusted_percentage = adjust_position_size(performance)
         logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
 
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "당신은 암호화폐 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
-                },
-                {
-                    "role": "user",
-                    "content": f"""
+        # 데이터 축소: 오더북 상위 10개 호가, 최근 10개의 OHLCV 데이터
+        reduced_orderbook = {
+            "bids": current_market_data['orderbook']['bids'][:10],
+            "asks": current_market_data['orderbook']['asks'][:10]
+        }
+
+        recent_daily_ohlcv = {key: value for key, value in current_market_data['daily_ohlcv'].items()}
+        recent_hourly_ohlcv = {key: value for key, value in current_market_data['hourly_ohlcv'].items()}
+        recent_four_hour_ohlcv = {key: value for key, value in current_market_data['four_hour_ohlcv'].items()}
+
+        # AI 프롬프트 최적화: 필요한 정보만 포함
+        prompt = f"""
 {possible_decisions}
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
@@ -318,32 +318,69 @@ Possible decisions:
 
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
-시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, "hold" 결정을 내려주세요.
+시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, 'hold' 결정을 내려주세요.
 
-다음과 같은 JSON 형식으로 응답하세요:
+다음과 같은 형식으로 응답하세요:
 
 {examples}
 
 투자 판단을 내려주세요.
-"""
+
+---
+
+현재 포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
+사용 가능한 USDT 잔고: {current_market_data['usdt_balance']}
+오더북 상위 10개 호가:
+Bids:
+{', '.join([f"{bid[0]}@{bid[1]}" for bid in reduced_orderbook['bids']])}
+Asks:
+{', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
+일일 OHLCV 요약:
+Open: {recent_daily_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_daily_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_daily_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_daily_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_daily_ohlcv.get('volume', {}).get('mean', 0)}
+RSI: {recent_daily_ohlcv.get('rsi', {}).get('mean', 0)}
+MACD: {recent_daily_ohlcv.get('macd', {}).get('mean', 0)}
+
+시간별 OHLCV 요약:
+Open: {recent_hourly_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_hourly_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_hourly_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_hourly_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_hourly_ohlcv.get('volume', {}).get('mean', 0)}
+RSI: {recent_hourly_ohlcv.get('rsi', {}).get('mean', 0)}
+MACD: {recent_hourly_ohlcv.get('macd', {}).get('mean', 0)}
+
+4시간 OHLCV 요약:
+Open: {recent_four_hour_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_four_hour_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_four_hour_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_four_hour_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_four_hour_ohlcv.get('volume', {}).get('mean', 0)}
+RSI: {recent_four_hour_ohlcv.get('rsi', {}).get('mean', 0)}
+MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
+
+이전 거래 퍼포먼스: {performance:.2f}%
+        """
+
+        response = openai.ChatCompletion.create(
+            model="gpt-4-turbo",  # 모델 이름을 GPT-4 Turbo로 변경
+            messages=[
+                {
+                    "role": "system",
+                    "content": "당신은 암호화폐 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
                 },
                 {
                     "role": "user",
-                    "content": f"""
-현재 포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
-사용 가능한 USDT 잔고: {current_market_data['usdt_balance']}
-오더북 요약: {json.dumps(current_market_data['orderbook'])}
-일일 OHLCV 요약: {json.dumps(current_market_data['daily_ohlcv'])}
-시간별 OHLCV 요약: {json.dumps(current_market_data['hourly_ohlcv'])}
-4시간 OHLCV 요약: {json.dumps(current_market_data['four_hour_ohlcv'])}
-이전 거래 퍼포먼스: {performance:.2f}%
-"""
+                    "content": prompt
                 }
             ],
-            max_tokens=300,
+            max_tokens=300,  # 최대 토큰 수를 줄임
             n=1,
             stop=None,
-            temperature=0.2
+            temperature=0.2  # 응답의 창의성 조절
         )
         logger.info("OpenAI API 호출 성공")
         response_content = response.choices[0].message.content
@@ -560,7 +597,7 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 오더북 조회 시도")
-        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": symbol, "limit": 50, "category": "linear"})
+        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": symbol, "limit": 10, "category": "linear"})
         logger.debug(f"{symbol} 오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -578,7 +615,7 @@ def ai_trading():
     # 4. 차트 데이터 조회 및 보조지표 추가 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 일일 데이터")
-        df_daily = get_ohlcv(symbol, interval="D", limit=180, category="linear")
+        df_daily = get_ohlcv(symbol, interval="D", limit=60, category="linear")  # 데이터 양 축소
         if df_daily is None:
             logger.error(f"{symbol} 일일 OHLCV 데이터 조회 실패")
             return
@@ -586,7 +623,7 @@ def ai_trading():
         df_daily = add_indicators(df_daily, df_daily)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 시간별 데이터")
-        df_hourly = get_ohlcv(symbol, interval="60", limit=168, category="linear")  # 7 days of hourly data
+        df_hourly = get_ohlcv(symbol, interval="60", limit=48, category="linear")  # 2일치 데이터로 축소
         if df_hourly is None:
             logger.error(f"{symbol} 시간별 OHLCV 데이터 조회 실패")
             return
@@ -595,7 +632,7 @@ def ai_trading():
 
         # 4시간 데이터 추가
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 4시간 데이터")
-        df_4h = get_ohlcv(symbol, interval="240", limit=4181, category="linear")  # 피보나치 기간에 맞춰 충분한 데이터 확보
+        df_4h = get_ohlcv(symbol, interval="240", limit=50, category="linear")  # 데이터 양 축소
         if df_4h is None:
             logger.error(f"{symbol} 4시간 OHLCV 데이터 조회 실패")
             return
@@ -605,7 +642,7 @@ def ai_trading():
         # 최근 데이터만 사용하도록 설정 (메모리 절약)
         df_daily_recent = df_daily.tail(60)
         df_hourly_recent = df_hourly.tail(48)
-        df_4h_recent = df_4h.tail(4181)  # 모든 피보나치 EMA를 계산하기 위해 전체 데이터 사용
+        df_4h_recent = df_4h.tail(50)  # 피보나치 EMA를 계산하기 위해 데이터 양 축소
         logger.info(f"{symbol} 최근 일일 데이터: {df_daily_recent.shape[0]}건, 최근 시간별 데이터: {df_hourly_recent.shape[0]}건, 4시간 데이터: {df_4h_recent.shape[0]}건")
     except Exception as e:
         logger.exception(f"{symbol} 차트 데이터 조회 또는 보조지표 추가 실패: {e}")
@@ -659,10 +696,10 @@ def ai_trading():
                 else:
                     # JSON 형식이 아닐 경우 텍스트에서 정보 추출
                     logger.warning("응답이 JSON 형식이 아님, 텍스트에서 정보 추출 시도")
-                    decision_match = re.search(r'"decision"\s*:\s*"(\w+)"', response_text, re.IGNORECASE)
-                    percentage_match = re.search(r'"percentage"\s*:\s*(\d+)', response_text, re.IGNORECASE)
-                    leverage_match = re.search(r'"leverage"\s*:\s*(\d+)', response_text, re.IGNORECASE)
-                    reason_match = re.search(r'"reason"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
+                    decision_match = re.search(r'decision:\s*(\w+)', response_text, re.IGNORECASE)
+                    percentage_match = re.search(r'percentage:\s*(\d+)', response_text, re.IGNORECASE)
+                    leverage_match = re.search(r'leverage:\s*(\d+)', response_text, re.IGNORECASE)
+                    reason_match = re.search(r'reason:\s*"([^"]+)"', response_text, re.IGNORECASE)
                     decision = decision_match.group(1) if decision_match else None
                     percentage = int(percentage_match.group(1)) if percentage_match else None
                     leverage = int(leverage_match.group(1)) if leverage_match else None
@@ -981,7 +1018,7 @@ if __name__ == "__main__":
             logger.info("트레이딩 작업 종료")
 
     # 스케줄링 주기 유지: 매 시간 1분에 실행
-    schedule.every().hour.at(":01").do(job)
+    schedule.every(1).minutes.do(job)
 
     logger.info("스케줄러 설정 완료")
 
