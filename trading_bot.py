@@ -149,12 +149,12 @@ def init_db():
     # 비밀번호를 URL 인코딩
     encoded_password = quote_plus(db_password)
 
-    # MongoDB 연결 URI (환경 변수로부터 가져오도록 수정)
+    # MongoDB 연결 URI 구성
     mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster0.7lcywne.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
     try:
-        # MongoClient 생성 시 ServerApi 사용
-        client = MongoClient(uri=mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
+        # MongoClient 생성 시 ServerApi 사용 (uri 키워드 제거)
+        client = MongoClient(mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
         
         # 서버 정보 조회로 연결 확인
         client.admin.command('ping')
