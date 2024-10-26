@@ -318,6 +318,8 @@ Possible decisions:
 
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
+시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, "hold" 결정을 내려주세요.
+
 다음과 같은 JSON 형식으로 응답하세요:
 
 {examples}
@@ -338,10 +340,10 @@ Possible decisions:
 """
                 }
             ],
-            max_tokens=300,  # 최대 토큰 수를 늘려 더 많은 정보를 반영
+            max_tokens=300,
             n=1,
             stop=None,
-            temperature=0.2  # 응답의 창의성 조절
+            temperature=0.2
         )
         logger.info("OpenAI API 호출 성공")
         response_content = response.choices[0].message.content
@@ -692,16 +694,24 @@ def ai_trading():
             logger.info(f"{symbol} Leverage: {leverage}x")
         logger.info(f"{symbol} Decision Reason: {reason}")
 
+        # 신호의 명확성 평가 (예시: 특정 지표의 기준 미달 시 "hold"로 변경)
+        # 이 부분은 실제 전략에 맞게 구현해야 합니다.
+        # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 "hold"
+        rsi = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 50)
+        if not (30 < rsi < 70):
+            logger.info(f"RSI가 {rsi}로, 신호가 애매하여 'hold'로 결정합니다.")
+            decision = "hold"
+
         # 현재 포지션 상태
         current_position = {
             "long": bool(long_position and float(long_position['size']) > 0),
             "short": bool(short_position and float(short_position['size']) > 0)
         }
 
-        # AI 결정 검증
+        # AI 결정 검증 및 'hold'로 강제 변경
         if not validate_decision(decision, current_position):
-            logger.warning(f"{symbol} 유효하지 않은 결정이므로 실행하지 않습니다.")
-            return
+            logger.warning(f"{symbol} 유효하지 않은 결정이므로 'hold'로 변경합니다.")
+            decision = "hold"
 
         order_executed = False
 
