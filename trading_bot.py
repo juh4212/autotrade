@@ -21,9 +21,9 @@ from dotenv import load_dotenv
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
 
-# 로깅 설정 - 운영 환경에서는 INFO 또는 WARNING으로 변경 권장
+# 로깅 설정 - 운영 환경에서는 INFO 또는 WARNING으로 변경
 logging.basicConfig(
-    level=logging.DEBUG,  # 개발 시 DEBUG, 운영 시 INFO 또는 WARNING으로 설정
+    level=logging.INFO,  # DEBUG에서 INFO로 변경
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()
@@ -41,7 +41,7 @@ if not API_KEY or not API_SECRET:
     logger.error("API keys not found. Please check your environment variables.")
     raise ValueError("Missing API keys. Please check your environment variables.")
 
-logger.debug("Bybit API 키가 성공적으로 로드되었습니다.")
+logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 
 # 시그니처 생성 함수
 def generate_signature(params, secret):
@@ -139,7 +139,7 @@ def set_leverage(symbol, leverage, category="linear"):
 
 # MongoDB 연결 설정
 def init_db():
-    logger.debug("init_db 함수 시작")
+    logger.info("init_db 함수 시작")
     # 환경 변수에서 MongoDB 비밀번호 가져오기
     db_password = os.getenv("MONGODB_PASSWORD")
     if not db_password:
@@ -160,7 +160,7 @@ def init_db():
         client.admin.command('ping')
         db = client['bitcoin_trades_db']
         trades_collection = db['trades']
-        logger.debug("MongoDB에 성공적으로 연결되었습니다.")
+        logger.info("MongoDB에 성공적으로 연결되었습니다.")
         return trades_collection
     except Exception as e:
         logger.exception(f"MongoDB 연결 실패: {e}")
@@ -169,7 +169,7 @@ def init_db():
 # 거래 기록을 DB에 저장하는 함수
 def log_trade(trades_collection, decision, percentage, reason, btc_balance,
               usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
-    logger.debug("log_trade 함수 시작")
+    logger.info("log_trade 함수 시작")
     trade = {
         "timestamp": datetime.now(),
         "decision": decision,
@@ -183,13 +183,13 @@ def log_trade(trades_collection, decision, percentage, reason, btc_balance,
     }
     try:
         trades_collection.insert_one(trade)
-        logger.debug("거래 기록이 성공적으로 DB에 저장되었습니다.")
+        logger.info("거래 기록이 성공적으로 DB에 저장되었습니다.")
     except Exception as e:
         logger.exception(f"거래 기록 DB 저장 실패: {e}")
 
 # 최근 투자 기록 조회
 def get_recent_trades(trades_collection, days=7):
-    logger.debug(f"get_recent_trades 함수 시작 - 최근 {days}일간의 거래 내역 조회")
+    logger.info(f"get_recent_trades 함수 시작 - 최근 {days}일간의 거래 내역 조회")
     seven_days_ago = datetime.now() - timedelta(days=days)
     try:
         cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago}}).sort("timestamp", -1)
@@ -197,9 +197,9 @@ def get_recent_trades(trades_collection, days=7):
         trades_df = pd.DataFrame(trades)
         if not trades_df.empty:
             trades_df['timestamp'] = pd.to_datetime(trades_df['timestamp'])
-            logger.debug(f"최근 거래 내역 조회 성공 - 총 {len(trades_df)}건")
+            logger.info(f"최근 거래 내역 조회 성공 - 총 {len(trades_df)}건")
         else:
-            logger.debug("최근 거래 내역이 없습니다.")
+            logger.info("최근 거래 내역이 없습니다.")
         return trades_df
     except Exception as e:
         logger.exception(f"최근 거래 내역 조회 실패: {e}")
@@ -207,9 +207,9 @@ def get_recent_trades(trades_collection, days=7):
 
 # 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
 def calculate_performance(trades_df):
-    logger.debug("calculate_performance 함수 시작")
+    logger.info("calculate_performance 함수 시작")
     if trades_df.empty:
-        logger.debug("거래 기록이 없어 퍼포먼스를 0%로 설정합니다.")
+        logger.info("거래 기록이 없어 퍼포먼스를 0%로 설정합니다.")
         return 0  # 기록이 없을 경우 0%로 설정
     try:
         # 초기 잔고 계산 (USDT + BTC * 당시 가격)
@@ -217,7 +217,7 @@ def calculate_performance(trades_df):
         # 최종 잔고 계산
         final_balance = trades_df.iloc[0]['usdt_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_usdt_price']
         performance = (final_balance - initial_balance) / initial_balance * 100
-        logger.debug(f"퍼포먼스 계산 완료: {performance:.2f}%")
+        logger.info(f"퍼포먼스 계산 완료: {performance:.2f}%")
         return performance
     except Exception as e:
         logger.exception(f"퍼포먼스 계산 실패: {e}")
@@ -225,7 +225,7 @@ def calculate_performance(trades_df):
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(trades_df, current_market_data):
-    logger.debug("generate_reflection 함수 시작")
+    logger.info("generate_reflection 함수 시작")
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
     openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -235,6 +235,16 @@ def generate_reflection(trades_df, current_market_data):
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
     try:
+        # 프롬프트 최적화를 위해 예시 응답 간소화
+        examples = """
+Example Response:
+{
+  "decision": "hold",
+  "percentage": 0,
+  "reason": "Market indicators are neutral, holding position."
+}
+"""
+
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
@@ -245,27 +255,39 @@ def generate_reflection(trades_df, current_market_data):
                 {
                     "role": "user",
                     "content": f"""
-Recent trading data:
-{trades_df.to_json(orient='records', date_format='iso')}
+Possible decisions:
+- "open_long": 롱 포지션 열기
+- "close_long": 롱 포지션 청산
+- "open_short": 숏 포지션 열기
+- "close_short": 숏 포지션 청산
+- "hold": 관망하기
 
-Current market data:
-{json.dumps(current_market_data)}
+레버리지는 1에서 10 사이의 정수로 설정하며, 새로운 포지션을 열 때만 포함합니다.
 
-Overall performance in the last 7 days: {performance:.2f}%
+다음과 같은 JSON 형식으로 응답하세요:
 
-Please analyze this data and provide:
-1. A brief reflection on the recent trading decisions
-2. Insights on what worked well and what didn't
-3. Suggestions for improvement in future trading decisions
-4. Any patterns or trends you notice in the market data
+{examples}
 
-Limit your response to 250 words or less.
+투자 판단을 내려주세요.
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+현재 포지션: 롱 - {long_position}, 숏 - {short_position}
+사용 가능한 USDT 잔고: {usdt_balance}
+오더북 요약: {json.dumps(orderbook)}
+일일 OHLCV 요약: {json.dumps(df_daily_recent.describe().to_dict())}
+시간별 OHLCV 요약: {json.dumps(df_hourly_recent.describe().to_dict())}
 """
                 }
             ],
-            timeout=60  # 시간 초과 설정 (초)
+            max_tokens=150,  # 최대 토큰 수 제한
+            n=1,
+            stop=None,
+            temperature=0.3  # 응답의 창의성 조절
         )
-        logger.debug("OpenAI API 호출 성공")
+        logger.info("OpenAI API 호출 성공")
         response_content = response.choices[0].message.content
         logger.debug(f"AI 응답 내용: {response_content}")
         return response_content
@@ -275,7 +297,7 @@ Limit your response to 250 words or less.
 
 # 데이터프레임에 보조 지표를 추가하는 함수
 def add_indicators(df):
-    logger.debug("add_indicators 함수 시작")
+    logger.info("add_indicators 함수 시작")
     try:
         # 볼린저 밴드 추가
         indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
@@ -321,7 +343,7 @@ def add_indicators(df):
             volume=df['volume']
         ).on_balance_volume()
 
-        logger.debug("보조 지표 추가 완료")
+        logger.info("보조 지표 추가 완료")
         return df
     except Exception as e:
         logger.exception(f"보조 지표 추가 실패: {e}")
@@ -329,7 +351,7 @@ def add_indicators(df):
 
 # 가격 데이터 가져오기 함수 (Bybit V5 API 사용)
 def get_ohlcv(symbol, interval, limit, category="linear"):
-    logger.debug(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
+    logger.info(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
     endpoint = "/v5/market/kline"
     params = {
         "category": category,  # 필수 파라미터 추가
@@ -346,7 +368,7 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
             df = df.astype(float)
-            logger.debug(f"OHLCV 데이터 조회 성공 - 총 {len(df)}건")
+            logger.info(f"OHLCV 데이터 조회 성공 - 총 {len(df)}건")
             return df
         except Exception as e:
             logger.exception(f"OHLCV 데이터 처리 실패: {e}")
@@ -357,11 +379,11 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
 
 ### 메인 AI 트레이딩 로직
 def ai_trading():
-    logger.debug("ai_trading 함수 시작")
+    logger.info("ai_trading 함수 시작")
     ### 데이터 가져오기
     # 1. 현재 포지션 조회 (Bybit V5 API 사용)
     try:
-        logger.debug("현재 포지션 조회 시도")
+        logger.info("현재 포지션 조회 시도")
         response = get_position("BTCUSDT", category="linear")
         logger.debug(f"포지션 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
@@ -378,7 +400,7 @@ def ai_trading():
 
     # 2. 현재 잔고 조회 (Bybit V5 API 사용)
     try:
-        logger.debug("현재 잔고 조회 시도")
+        logger.info("현재 잔고 조회 시도")
         response = get_wallet_balance("USDT", account_type="CONTRACT")
         logger.debug(f"잔고 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
@@ -400,7 +422,7 @@ def ai_trading():
                 break
 
         if usdt_balance is not None:
-            logger.debug(f"USDT 잔고: {usdt_balance}")
+            logger.info(f"USDT 잔고: {usdt_balance}")
         else:
             logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
             return
@@ -410,12 +432,12 @@ def ai_trading():
 
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
-        logger.debug("오더북 조회 시도")
+        logger.info("오더북 조회 시도")
         response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": "BTCUSDT", "limit": 50, "category": "linear"})
         logger.debug(f"오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
-            orderbook = None
+            orderbook = {}
         else:
             orderbook = {
                 'bids': response['result']['b'],
@@ -424,11 +446,11 @@ def ai_trading():
             logger.debug(f"오더북 데이터: {orderbook}")
     except Exception as e:
         logger.exception(f"오더북 조회 실패: {e}")
-        orderbook = None
+        orderbook = {}
 
     # 4. 차트 데이터 조회 및 보조지표 추가 (Bybit V5 API 사용)
     try:
-        logger.debug("차트 데이터 조회 시도 - 일일 데이터")
+        logger.info("차트 데이터 조회 시도 - 일일 데이터")
         df_daily = get_ohlcv("BTCUSDT", interval="D", limit=180, category="linear")
         if df_daily is None:
             logger.error("일일 OHLCV 데이터 조회 실패")
@@ -436,7 +458,7 @@ def ai_trading():
         df_daily = dropna(df_daily)
         df_daily = add_indicators(df_daily)
         
-        logger.debug("차트 데이터 조회 시도 - 시간별 데이터")
+        logger.info("차트 데이터 조회 시도 - 시간별 데이터")
         df_hourly = get_ohlcv("BTCUSDT", interval="60", limit=168, category="linear")  # 7 days of hourly data
         if df_hourly is None:
             logger.error("시간별 OHLCV 데이터 조회 실패")
@@ -447,28 +469,19 @@ def ai_trading():
         # 최근 데이터만 사용하도록 설정 (메모리 절약)
         df_daily_recent = df_daily.tail(60)
         df_hourly_recent = df_hourly.tail(48)
-        logger.debug(f"최근 일일 데이터: {df_daily_recent.shape[0]}건, 최근 시간별 데이터: {df_hourly_recent.shape[0]}건")
+        logger.info(f"최근 일일 데이터: {df_daily_recent.shape[0]}건, 최근 시간별 데이터: {df_hourly_recent.shape[0]}건")
     except Exception as e:
         logger.exception(f"차트 데이터 조회 또는 보조지표 추가 실패: {e}")
         return
 
-    # 5. 공포 탐욕 지수 가져오기 (삭제됨)
-
-    # 6. 뉴스 데이터 가져오기 (필요 시 활성화)
-    # image_data = capture_chart()  # 이미지 캡처 함수 호출 (필요 시 활성화)
-
     ### AI에게 데이터 제공하고 판단 받기
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
-        logger.error("OpenAI API key가 누락되었거나 유효하지 않습니다.")
-        return None
     try:
         # 데이터베이스 연결
-        logger.debug("데이터베이스 연결 시도")
+        logger.info("데이터베이스 연결 시도")
         trades_collection = init_db()
 
         # 최근 거래 내역 가져오기
-        logger.debug("최근 거래 내역 조회 시도")
+        logger.info("최근 거래 내역 조회 시도")
         recent_trades = get_recent_trades(trades_collection)
 
         # 현재 시장 데이터 수집
@@ -476,65 +489,31 @@ def ai_trading():
             "orderbook": orderbook,
             "daily_ohlcv": df_daily_recent.describe().to_dict(),  # 요약 통계로 대체
             "hourly_ohlcv": df_hourly_recent.describe().to_dict()  # 요약 통계로 대체
-            # "chart_image": encoded_image  # 이미지 데이터 포함 (필요 시 추가)
         }
         logger.debug(f"현재 시장 데이터: {current_market_data}")
 
         # 반성 및 개선 내용 생성
-        logger.debug("반성 및 개선 내용 생성 시도")
+        logger.info("반성 및 개선 내용 생성 시도")
         reflection = generate_reflection(recent_trades, current_market_data)
         logger.debug(f"생성된 반성 내용: {reflection}")
 
-        # AI 모델에 반성 내용 제공
-        # Few-shot prompting으로 JSON 예시 추가
-        examples = """
-Example Response 1:
-{
-  "decision": "open_long",
-  "percentage": 50,
-  "leverage": 5,
-  "reason": "기술 지표와 시장 상황을 고려할 때, 롱 포지션을 여는 것이 유리합니다."
-}
+        if not reflection:
+            logger.error("반성 내용을 생성할 수 없습니다.")
+            return
 
-Example Response 2:
-{
-  "decision": "close_long",
-  "percentage": 100,
-  "reason": "현재 롱 포지션을 보유 중이며, 시장 지표가 반전을 시사하여 롱 포지션을 청산하는 것이 바람직합니다."
-}
+        # AI 모델에 반성 내용 제공 및 투자 판단 받기
+        logger.info("OpenAI API 호출 준비 완료")
 
-Example Response 3:
-{
-  "decision": "open_short",
-  "percentage": 30,
-  "leverage": 3,
-  "reason": "시장 트렌드가 부정적으로 전개되고 트렌드 지표가 높아 숏 포지션을 여는 것이 유리합니다."
-}
-
-Example Response 4:
-{
-  "decision": "close_short",
-  "percentage": 100,
-  "reason": "현재 숏 포지션을 보유 중이며, 시장 지표가 상승 추세를 시사하여 숏 포지션을 청산하는 것이 바람직합니다."
-}
-
-Example Response 5:
-{
-  "decision": "hold",
-  "percentage": 0,
-  "reason": "시장 지표가 중립적이어서 명확한 신호가 없으므로 관망하는 것이 좋습니다."
-}
-"""
-
-        # 메시지 구성
-        messages = [
-            {
-                "role": "system",
-                "content": "당신은 비트코인 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
-            },
-            {
-                "role": "user",
-                "content": f"""
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "당신은 비트코인 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 Possible decisions:
 - "open_long": 롱 포지션 열기
 - "close_long": 롱 포지션 청산
@@ -550,34 +529,31 @@ Possible decisions:
 
 투자 판단을 내려주세요.
 """
-            },
-            {
-                "role": "user",
-                "content": f"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 현재 포지션: 롱 - {long_position}, 숏 - {short_position}
 사용 가능한 USDT 잔고: {usdt_balance}
 오더북 요약: {json.dumps(orderbook)}
 일일 OHLCV 요약: {json.dumps(df_daily_recent.describe().to_dict())}
 시간별 OHLCV 요약: {json.dumps(df_hourly_recent.describe().to_dict())}
 """
-            }
-        ]
-
-        logger.debug("OpenAI API 호출 준비 완료")
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=messages,
-            timeout=60  # 시간 초과 설정 (초)
+                }
+            ],
+            max_tokens=150,  # 최대 토큰 수 제한
+            n=1,
+            stop=None,
+            temperature=0.3  # 응답의 창의성 조절
         )
-        logger.debug("OpenAI API 호출 성공")
+        logger.info("OpenAI API 호출 성공")
 
         response_text = response.choices[0].message.content
         logger.debug(f"AI 응답 내용: {response_text}")
 
         # AI 응답 파싱
         def parse_ai_response(response_text):
-            logger.debug("parse_ai_response 함수 시작")
+            logger.info("parse_ai_response 함수 시작")
             try:
                 # JSON 부분 추출
                 json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
@@ -592,7 +568,7 @@ Possible decisions:
                     return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
                 else:
                     # JSON 형식이 아닐 경우 텍스트에서 정보 추출
-                    logger.debug("응답이 JSON 형식이 아님, 텍스트에서 정보 추출 시도")
+                    logger.warning("응답이 JSON 형식이 아님, 텍스트에서 정보 추출 시도")
                     decision_match = re.search(r'"decision"\s*:\s*"(\w+)"', response_text, re.IGNORECASE)
                     percentage_match = re.search(r'"percentage"\s*:\s*(\d+)', response_text, re.IGNORECASE)
                     leverage_match = re.search(r'"leverage"\s*:\s*(\d+)', response_text, re.IGNORECASE)
@@ -632,13 +608,13 @@ Possible decisions:
 
         # 현재 가격 가져오기 (Bybit V5 API 사용)
         try:
-            logger.debug("현재 가격 데이터 조회 시도")
+            logger.info("현재 가격 데이터 조회 시도")
             response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": "BTCUSDT", "category": "linear"})
             if not response or response.get('retCode') != 0:
                 logger.error(f"현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
                 return
             current_price = float(response['result']['list'][0]['lastPrice'])
-            logger.debug(f"현재 BTC 가격: {current_price}")
+            logger.info(f"현재 BTC 가격: {current_price}")
         except Exception as e:
             logger.exception(f"현재 가격 데이터 조회 실패: {e}")
             return
@@ -657,7 +633,7 @@ Possible decisions:
                     if not response or response.get('retCode') != 0:
                         logger.error(f"레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
-                    logger.debug(f"레버리지 설정 완료: {leverage}x")
+                    logger.info(f"레버리지 설정 완료: {leverage}x")
                 except Exception as e:
                     logger.exception(f"레버리지 설정 실패: {e}")
                     return
@@ -721,7 +697,7 @@ Possible decisions:
                     if not response or response.get('retCode') != 0:
                         logger.error(f"레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
-                    logger.debug(f"레버리지 설정 완료: {leverage}x")
+                    logger.info(f"레버리지 설정 완료: {leverage}x")
                 except Exception as e:
                     logger.exception(f"레버리지 설정 실패: {e}")
                     return
@@ -780,7 +756,7 @@ Possible decisions:
                 return
 
             # 거래 실행 여부와 관계없이 현재 잔고 및 포지션 조회
-            logger.debug("거래 후 잔고 및 포지션 조회 시도")
+            logger.info("거래 후 잔고 및 포지션 조회 시도")
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
             try:
                 # 포지션 재조회
@@ -812,7 +788,7 @@ Possible decisions:
                         break
 
                 if usdt_balance is not None:
-                    logger.debug(f"USDT 잔고: {usdt_balance}")
+                    logger.info(f"USDT 잔고: {usdt_balance}")
                 else:
                     logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
                     return
@@ -845,10 +821,10 @@ Possible decisions:
         logger.exception(f"AI 트레이딩 로직 중 오류 발생: {e}")
         return
 
-    logger.debug("ai_trading 함수 종료")
+    logger.info("ai_trading 함수 종료")
 
 if __name__ == "__main__":
-    logger.debug("메인 스크립트 시작")
+    logger.info("메인 스크립트 시작")
     # 중복 실행 방지를 위한 변수
     trading_in_progress = False
 
@@ -860,26 +836,22 @@ if __name__ == "__main__":
             return
         try:
             trading_in_progress = True
-            logger.debug("트레이딩 작업 시작")
+            logger.info("트레이딩 작업 시작")
             ai_trading()
         except Exception as e:
             logger.exception(f"트레이딩 작업 중 오류 발생: {e}")
         finally:
             trading_in_progress = False
-            logger.debug("트레이딩 작업 종료")
+            logger.info("트레이딩 작업 종료")
 
-    # 매 1분마다 실행 (테스트 용도)
-    schedule.every(1).minutes.do(job)
+    # 스케줄링 주기 변경: 매 5분마다 실행
+    schedule.every(5).minutes.do(job)
 
-    # 원래 스케줄은 주석 처리하거나 제거
-    # schedule.every().day.at("00:00").do(job)
-    # schedule.every().day.at("04:00").do(job)
-    # schedule.every().day.at("08:00").do(job)
-    # schedule.every().day.at("12:00").do(job)
-    # schedule.every().day.at("16:00").do(job)
-    # schedule.every().day.at("20:00").do(job)
+    # 운영 환경에서는 더 긴 주기로 변경 가능
+    # 예: 매 15분마다 실행
+    # schedule.every(15).minutes.do(job)
 
-    logger.debug("스케줄러 설정 완료")
+    logger.info("스케줄러 설정 완료")
 
     while True:
         try:
