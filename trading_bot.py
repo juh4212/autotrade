@@ -20,9 +20,9 @@ from dotenv import load_dotenv
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
 
-# 로깅 설정 - 로그 레벨을 DEBUG로 설정하고, 콘솔에만 출력
+# 로깅 설정 - 운영 환경에서는 INFO 또는 WARNING으로 변경 권장
 logging.basicConfig(
-    level=logging.DEBUG,  # 운영 시 INFO 또는 WARNING으로 변경 권장
+    level=logging.DEBUG,  # 개발 시 DEBUG, 운영 시 INFO 또는 WARNING으로 설정
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()
@@ -396,9 +396,9 @@ def ai_trading():
             logger.error(f"잔고 조회 오류: {response.get('retMsg') if response else 'No response'}")
             return
         # 'list'는 리스트이므로, 'USDT' 코인을 찾기 위해 순회
-        usdt_entry = next((item for item in response['result']['list'] if item['coin'] == 'USDT'), None)
-        if usdt_entry and 'availableBalance' in usdt_entry:
-            usdt_balance = float(usdt_entry['availableBalance'])
+        usdt_entry = next((item for item in response['result']['list'] if item['coin']['coin'] == 'USDT'), None)
+        if usdt_entry and 'availableBalance' in usdt_entry['coin']:
+            usdt_balance = float(usdt_entry['coin']['availableBalance'])
             logger.debug(f"USDT 잔고: {usdt_balance}")
         else:
             logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
@@ -802,9 +802,9 @@ Possible decisions:
                 if not response or response.get('retCode') != 0:
                     logger.error(f"잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
-                usdt_entry = next((item for item in response['result']['list'] if item['coin'] == 'USDT'), None)
-                if usdt_entry and 'availableBalance' in usdt_entry:
-                    usdt_balance = float(usdt_entry['availableBalance'])
+                usdt_entry = next((item for item in response['result']['list'] if item['coin']['coin'] == 'USDT'), None)
+                if usdt_entry and 'availableBalance' in usdt_entry['coin']:
+                    usdt_balance = float(usdt_entry['coin']['availableBalance'])
                 else:
                     logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
                     return
