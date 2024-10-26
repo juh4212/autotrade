@@ -327,25 +327,6 @@ def add_indicators(df):
         logger.exception(f"보조 지표 추가 실패: {e}")
         return df
 
-# 공포 탐욕 지수 조회
-def get_fear_and_greed_index():
-    logger.debug("get_fear_and_greed_index 함수 시작")
-    url = "https://api.alternative.me/fng/"
-    try:
-        # 재시도 전략 설정
-        session = requests.Session()
-        retries = Retry(total=3, backoff_factor=1, status_forcelist=[502, 503, 504])
-        session.mount('https://', HTTPAdapter(max_retries=retries))
-        
-        response = session.get(url, timeout=15)  # 타임아웃을 15초로 연장
-        response.raise_for_status()
-        data = response.json()
-        logger.debug(f"공포 탐욕 지수 데이터: {data['data'][0]}")
-        return data['data'][0]
-    except requests.exceptions.RequestException as e:
-        logger.exception(f"공포 탐욕 지수 조회 실패: {e}")
-        return None
-
 # 가격 데이터 가져오기 함수 (Bybit V5 API 사용)
 def get_ohlcv(symbol, interval, limit, category="linear"):
     logger.debug(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
@@ -471,14 +452,7 @@ def ai_trading():
         logger.exception(f"차트 데이터 조회 또는 보조지표 추가 실패: {e}")
         return
 
-    # 5. 공포 탐욕 지수 가져오기
-    try:
-        logger.debug("공포 탐욕 지수 조회 시도")
-        fear_greed_index = get_fear_and_greed_index()
-        logger.debug(f"공포 탐욕 지수: {fear_greed_index}")
-    except Exception as e:
-        logger.exception(f"공포 탐욕 지수 조회 실패: {e}")
-        fear_greed_index = None
+    # 5. 공포 탐욕 지수 가져오기 (삭제됨)
 
     # 6. 뉴스 데이터 가져오기 (필요 시 활성화)
     # image_data = capture_chart()  # 이미지 캡처 함수 호출 (필요 시 활성화)
@@ -499,7 +473,6 @@ def ai_trading():
 
         # 현재 시장 데이터 수집
         current_market_data = {
-            "fear_greed_index": fear_greed_index,
             "orderbook": orderbook,
             "daily_ohlcv": df_daily_recent.describe().to_dict(),  # 요약 통계로 대체
             "hourly_ohlcv": df_hourly_recent.describe().to_dict()  # 요약 통계로 대체
@@ -586,7 +559,6 @@ Possible decisions:
 오더북 요약: {json.dumps(orderbook)}
 일일 OHLCV 요약: {json.dumps(df_daily_recent.describe().to_dict())}
 시간별 OHLCV 요약: {json.dumps(df_hourly_recent.describe().to_dict())}
-공포 탐욕 지수: {json.dumps(fear_greed_index)}
 """
             }
         ]
