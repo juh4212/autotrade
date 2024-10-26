@@ -16,6 +16,8 @@ from urllib.parse import quote_plus
 import hashlib
 import hmac
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
@@ -330,7 +332,12 @@ def get_fear_and_greed_index():
     logger.debug("get_fear_and_greed_index 함수 시작")
     url = "https://api.alternative.me/fng/"
     try:
-        response = requests.get(url, timeout=10)
+        # 재시도 전략 설정
+        session = requests.Session()
+        retries = Retry(total=3, backoff_factor=1, status_forcelist=[502, 503, 504])
+        session.mount('https://', HTTPAdapter(max_retries=retries))
+        
+        response = session.get(url, timeout=15)  # 타임아웃을 15초로 연장
         response.raise_for_status()
         data = response.json()
         logger.debug(f"공포 탐욕 지수 데이터: {data['data'][0]}")
