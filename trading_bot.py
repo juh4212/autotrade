@@ -396,22 +396,21 @@ def ai_trading():
             logger.error(f"잔고 조회 오류: {response.get('retMsg') if response else 'No response'}")
             return
 
-        usdt_entry = None
+        usdt_balance = None
         for item in response.get('result', {}).get('list', []):
             coin_info = item.get('coin', [])
             if isinstance(coin_info, list):
                 for coin in coin_info:
                     if isinstance(coin, dict) and coin.get('coin') == 'USDT':
-                        usdt_entry = coin
+                        usdt_balance = float(coin.get('availableToWithdraw', '0'))
                         break
             elif isinstance(coin_info, dict):
                 if coin_info.get('coin') == 'USDT':
-                    usdt_entry = coin_info
-            if usdt_entry:
+                    usdt_balance = float(coin.get('availableToWithdraw', '0'))
+            if usdt_balance is not None:
                 break
 
-        if usdt_entry and 'availableBalance' in usdt_entry:
-            usdt_balance = float(usdt_entry['availableBalance'])
+        if usdt_balance is not None:
             logger.debug(f"USDT 잔고: {usdt_balance}")
         else:
             logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
@@ -815,22 +814,22 @@ Possible decisions:
                 if not response or response.get('retCode') != 0:
                     logger.error(f"잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
-                usdt_entry = None
+                usdt_balance = None
                 for item in response.get('result', {}).get('list', []):
                     coin_info = item.get('coin', [])
                     if isinstance(coin_info, list):
                         for coin in coin_info:
                             if isinstance(coin, dict) and coin.get('coin') == 'USDT':
-                                usdt_entry = coin
+                                usdt_balance = float(coin.get('availableToWithdraw', '0'))
                                 break
                     elif isinstance(coin_info, dict):
                         if coin_info.get('coin') == 'USDT':
-                            usdt_entry = coin_info
-                    if usdt_entry:
+                            usdt_balance = float(coin_info.get('availableToWithdraw', '0'))
+                    if usdt_balance is not None:
                         break
 
-                if usdt_entry and 'availableBalance' in usdt_entry:
-                    usdt_balance = float(usdt_entry['availableBalance'])
+                if usdt_balance is not None:
+                    logger.debug(f"USDT 잔고: {usdt_balance}")
                 else:
                     logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
                     return
