@@ -16,6 +16,7 @@ from urllib.parse import quote_plus
 import hashlib
 import hmac
 from dotenv import load_dotenv
+import ssl
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -154,8 +155,12 @@ def init_db():
     mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster1.tbzg2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster1"
 
     try:
+        # SSL 컨텍스트 생성 및 TLS 1.2 강제 설정
+        ssl_context = ssl.create_default_context()
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+
         # MongoDB 클라이언트 생성
-        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000, ssl=True, ssl_cert_reqs=ssl.CERT_REQUIRED, ssl_context=ssl_context)
         # 서버 정보 조회로 연결 확인
         client.server_info()
         db = client['bitcoin_trades_db']
@@ -508,7 +513,7 @@ Example Response 3:
   "decision": "open_short",
   "percentage": 30,
   "leverage": 3,
-  "reason": "시장 트렌드가 부정적으로 전개되고 공포 지수가 높아 숏 포지션을 여는 것이 유리합니다."
+  "reason": "시장 트렌드가 부정적으로 전개되고 트렌드 지표가 높아 숏 포지션을 여는 것이 유리합니다."
 }
 
 Example Response 4:
