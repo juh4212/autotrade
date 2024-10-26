@@ -291,7 +291,6 @@ Possible decisions:
 Possible decisions:
 - open_long: 롱 포지션 열기
 - open_short: 숏 포지션 열기
-- hold: 관망하기
 """
 
         # 퍼포먼스 기반 포지션 크기 조정
@@ -520,11 +519,14 @@ def validate_decision(decision, current_position):
     """
     AI의 결정이 현재 포지션과 충돌하지 않는지 검증합니다.
     """
-    if current_position["long"] and decision == "open_short":
+    if decision == "open_long" and current_position["short"]:
+        logger.warning("이미 숏 포지션에 있으므로 롱 포지션을 열 수 없습니다.")
+        return False
+    if decision == "open_short" and current_position["long"]:
         logger.warning("이미 롱 포지션에 있으므로 숏 포지션을 열 수 없습니다.")
         return False
-    if current_position["short"] and decision == "open_long":
-        logger.warning("이미 숏 포지션에 있으므로 롱 포지션을 열 수 없습니다.")
+    if decision in ["close_long", "close_short"] and not (current_position["long"] or current_position["short"]):
+        logger.warning("청산할 포지션이 없으므로 해당 결정을 실행할 수 없습니다.")
         return False
     return True
 
@@ -937,7 +939,11 @@ def ai_trading():
                 else:
                     logger.info(f"{symbol} 청산할 숏 포지션이 없습니다.")
             elif decision == "hold":
-                logger.info(f"{symbol} 결정: 관망. 아무 조치도 취하지 않습니다.")
+                if current_position["long"] or current_position["short"]:
+                    logger.info(f"{symbol} 결정: 관망. 아무 조치도 취하지 않습니다.")
+                else:
+                    logger.warning(f"{symbol} 포지션이 없으므로 'hold' 결정을 무시합니다.")
+                    return
             else:
                 logger.error(f"{symbol} AI로부터 유효하지 않은 결정을 받았습니다.")
                 return
