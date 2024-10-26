@@ -395,8 +395,17 @@ def ai_trading():
         if not response or response.get('retCode') != 0:
             logger.error(f"잔고 조회 오류: {response.get('retMsg') if response else 'No response'}")
             return
-        # 'list'는 리스트이므로, 'USDT' 코인을 찾기 위해 순회
-        usdt_entry = next((item for item in response['result']['list'] if item['coin']['coin'] == 'USDT'), None)
+
+        usdt_entry = None
+        for item in response.get('result', {}).get('list', []):
+            coin_info = item.get('coin')
+            if isinstance(coin_info, dict):
+                if coin_info.get('coin') == 'USDT':
+                    usdt_entry = item
+                    break
+            else:
+                logger.warning(f"예상치 못한 'coin' 형식: {coin_info} (type: {type(coin_info)})")
+
         if usdt_entry and 'availableBalance' in usdt_entry['coin']:
             usdt_balance = float(usdt_entry['coin']['availableBalance'])
             logger.debug(f"USDT 잔고: {usdt_balance}")
@@ -784,6 +793,11 @@ Possible decisions:
                 logger.error("AI로부터 유효하지 않은 결정을 받았습니다.")
                 return
 
+            # 거래 실행 (주문이 실행된 경우)
+            # 거래 실행 여부에 따라 퍼센티지와 레버리지를 저장
+            trade_percentage = int(percentage) if order_executed else 0
+            trade_leverage = int(leverage) if leverage else 0
+
             # 거래 실행 여부와 관계없이 현재 잔고 및 포지션 조회
             logger.debug("거래 후 잔고 및 포지션 조회 시도")
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
@@ -802,7 +816,16 @@ Possible decisions:
                 if not response or response.get('retCode') != 0:
                     logger.error(f"잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
-                usdt_entry = next((item for item in response['result']['list'] if item['coin']['coin'] == 'USDT'), None)
+                usdt_entry = None
+                for item in response.get('result', {}).get('list', []):
+                    coin_info = item.get('coin')
+                    if isinstance(coin_info, dict):
+                        if coin_info.get('coin') == 'USDT':
+                            usdt_entry = item
+                            break
+                    else:
+                        logger.warning(f"예상치 못한 'coin' 형식: {coin_info} (type: {type(coin_info)})")
+
                 if usdt_entry and 'availableBalance' in usdt_entry['coin']:
                     usdt_balance = float(usdt_entry['coin']['availableBalance'])
                 else:
@@ -819,7 +842,7 @@ Possible decisions:
                 log_trade(
                     trades_collection,
                     decision,
-                    int(percentage) if order_executed else 0,
+                    trade_percentage,
                     reason,
                     btc_balance,
                     usdt_balance,
