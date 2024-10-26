@@ -9,3 +9,4 @@ streamlit==1.25.0
 plotly==5.15.0
 dnspython==2.4.2
 pymongo[srv]==4.6.0
+python-dotenv==0.21.1
