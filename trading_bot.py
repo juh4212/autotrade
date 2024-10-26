@@ -23,7 +23,7 @@ load_dotenv()
 # 로깅 설정 - 운영 환경에서는 INFO 레벨로 설정
 logging.basicConfig(
     level=logging.INFO,  # DEBUG에서 INFO로 변경
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levellevel)s - %(message)s',
     handlers=[
         logging.StreamHandler()
     ]
@@ -103,7 +103,7 @@ def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
     params["sign"] = generate_signature(params, API_SECRET)
     return call_bybit_api(endpoint, method='GET', params=params)
 
-def place_order(symbol, side, order_type, qty, leverage=1, reduce_only=False, category="linear"):
+def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, category="linear"):
     """주문 생성"""
     endpoint = "/v5/order/create"
     params = {
@@ -120,14 +120,13 @@ def place_order(symbol, side, order_type, qty, leverage=1, reduce_only=False, ca
     }
     # 레버리지는 새로운 포지션을 열 때만 포함
     if not reduce_only:
-        # 레버리지를 1에서 10 사이의 정수로 제한
-        leverage = int(round(leverage))
-        leverage = max(1, min(leverage, 10))
+        # 레버리지를 5으로 고정
+        leverage = 5
         params["leverage"] = leverage
     params["sign"] = generate_signature(params, API_SECRET)
     return call_bybit_api(endpoint, method='POST', params=params, data=params)
 
-def set_leverage(symbol, leverage, category="linear"):
+def set_leverage(symbol, leverage=5, category="linear"):
     """레버리지 설정"""
     endpoint = "/v5/account/set-leverage"
     params = {
@@ -291,8 +290,8 @@ Possible decisions:
                     "content": f"""
 {possible_decisions}
 
-레버리지는 1에서 10 사이의 정수로 설정하며, 새로운 포지션을 열 때만 포함합니다.
-자신 있는 자리라면 높은 레버리지를 사용하고, 자신 없는 자리라면 낮은 레버리지를 사용하세요.
+레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
+자신 있는 자리라면 진입 비율을 20~30%로, 자신 없는 자리라면 진입 비율을 10~20%로 설정하세요.
 
 진입 비율은 10%에서 30% 사이로 설정합니다.
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
@@ -665,9 +664,9 @@ def ai_trading():
             return
 
         logger.info(f"{symbol} AI Decision: {decision.upper()}")
-        logger.info(f"{symbol} Percentage: {percentage}")
+        logger.info(f"{symbol} Percentage: {percentage}%")
         if leverage:
-            logger.info(f"{symbol} Leverage: {leverage}")
+            logger.info(f"{symbol} Leverage: {leverage}x")
         logger.info(f"{symbol} Decision Reason: {reason}")
 
         # 현재 포지션 상태
@@ -703,9 +702,8 @@ def ai_trading():
                 if leverage is None:
                     logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
                     return
-                # 레버리지를 1에서 10 사이의 정수로 제한
-                leverage = int(round(leverage))
-                leverage = max(1, min(leverage, 10))
+                # 레버리지를 5으로 고정
+                leverage = 5
                 logger.info(f"{symbol} 설정된 레버리지: {leverage}x")
 
                 try:
@@ -781,9 +779,8 @@ def ai_trading():
                 if leverage is None:
                     logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
                     return
-                # 레버리지를 1에서 10 사이의 정수로 제한
-                leverage = int(round(leverage))
-                leverage = max(1, min(leverage, 10))
+                # 레버리지를 5으로 고정
+                leverage = 5
                 logger.info(f"{symbol} 설정된 레버리지: {leverage}x")
 
                 try:
