@@ -298,15 +298,15 @@ Possible decisions:
         adjusted_percentage = adjust_position_size(performance)
         logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
 
-        # 데이터 축소: 오더북 상위 10개 호가, 최근 10개의 OHLCV 데이터
+        # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
         reduced_orderbook = {
             "bids": current_market_data['orderbook']['bids'][:10],
             "asks": current_market_data['orderbook']['asks'][:10]
         }
 
-        recent_daily_ohlcv = {key: value for key, value in current_market_data['daily_ohlcv'].items()}
-        recent_hourly_ohlcv = {key: value for key, value in current_market_data['hourly_ohlcv'].items()}
-        recent_four_hour_ohlcv = {key: value for key, value in current_market_data['four_hour_ohlcv'].items()}
+        recent_daily_ohlcv = current_market_data['daily_ohlcv']
+        recent_hourly_ohlcv = current_market_data['hourly_ohlcv']
+        recent_four_hour_ohlcv = current_market_data['four_hour_ohlcv']
 
         # AI 프롬프트 최적화: 필요한 정보만 포함
         prompt = f"""
@@ -314,27 +314,26 @@ Possible decisions:
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
 진입 비율은 {adjusted_percentage}%로 설정합니다.
-자신 있는 자리라면 진입 비율을 20~30%로, 자신 없는 자리라면 진입 비율을 10~20%로 설정하세요.
 
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
 시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, 'hold' 결정을 내려주세요.
 
-다음과 같은 형식으로 응답하세요:
+다음 형식으로 응답하세요 (예시 참고):
 
 {examples}
-
-투자 판단을 내려주세요.
 
 ---
 
 현재 포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
 사용 가능한 USDT 잔고: {current_market_data['usdt_balance']}
+
 오더북 상위 10개 호가:
 Bids:
 {', '.join([f"{bid[0]}@{bid[1]}" for bid in reduced_orderbook['bids']])}
 Asks:
 {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
+
 일일 OHLCV 요약:
 Open: {recent_daily_ohlcv.get('open', {}).get('mean', 0)}
 High: {recent_daily_ohlcv.get('high', {}).get('mean', 0)}
@@ -363,10 +362,10 @@ RSI: {recent_four_hour_ohlcv.get('rsi', {}).get('mean', 0)}
 MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
 
 이전 거래 퍼포먼스: {performance:.2f}%
-        """
+"""
 
         response = openai.ChatCompletion.create(
-            model="gpt-4-turbo",  # 모델 이름을 GPT-4 Turbo로 변경
+            model="gpt-4-turbo",  # 정확한 모델 이름으로 변경
             messages=[
                 {
                     "role": "system",
@@ -377,14 +376,14 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
                     "content": prompt
                 }
             ],
-            max_tokens=300,  # 최대 토큰 수를 줄임
+            max_tokens=2000,  # 최대 토큰 수를 2000으로 설정
             n=1,
             stop=None,
             temperature=0.2  # 응답의 창의성 조절
         )
         logger.info("OpenAI API 호출 성공")
         response_content = response.choices[0].message.content
-        logger.debug(f"AI 응답 내용: {response_content}")
+        logger.debug(f"AI 응답 전체 내용: {response_content}")
         return response_content
     except Exception as e:
         logger.exception(f"OpenAI API 호출 실패: {e}")
@@ -682,7 +681,7 @@ def ai_trading():
         def parse_ai_response(response_text):
             logger.info("parse_ai_response 함수 시작")
             try:
-                # JSON 부분 추출
+                # JSON 부분 추출 시도
                 json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
                 if json_match:
                     json_str = json_match.group(0)
@@ -692,38 +691,54 @@ def ai_trading():
                     leverage = parsed_json.get('leverage')
                     reason = parsed_json.get('reason')
                     logger.debug(f"파싱된 JSON: {parsed_json}")
-                    return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
+                    # 모든 필드가 존재하는지 확인
+                    if decision and percentage and leverage and reason:
+                        return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
+                    else:
+                        logger.warning("JSON 응답에 필요한 필드가 누락되었습니다.")
                 else:
                     # JSON 형식이 아닐 경우 텍스트에서 정보 추출
-                    logger.warning("응답이 JSON 형식이 아님, 텍스트에서 정보 추출 시도")
+                    logger.warning("응답이 JSON 형식이 아님. 텍스트에서 정보 추출 시도")
                     decision_match = re.search(r'decision:\s*(\w+)', response_text, re.IGNORECASE)
                     percentage_match = re.search(r'percentage:\s*(\d+)', response_text, re.IGNORECASE)
                     leverage_match = re.search(r'leverage:\s*(\d+)', response_text, re.IGNORECASE)
-                    reason_match = re.search(r'reason:\s*"([^"]+)"', response_text, re.IGNORECASE)
-                    decision = decision_match.group(1) if decision_match else None
+                    reason_match = re.search(r'reason:\s*(.+)', response_text, re.IGNORECASE)
+                    decision = decision_match.group(1).lower() if decision_match else None
                     percentage = int(percentage_match.group(1)) if percentage_match else None
                     leverage = int(leverage_match.group(1)) if leverage_match else None
                     reason = reason_match.group(1).strip() if reason_match else None
                     parsed_data = {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
                     logger.debug(f"파싱된 텍스트 데이터: {parsed_data}")
-                    return parsed_data
+                    # 모든 필드가 존재하는지 확인
+                    if decision and percentage and leverage and reason:
+                        return parsed_data
+                    else:
+                        logger.warning("텍스트 응답에 필요한 필드가 누락되었습니다.")
+                # 필요한 필드가 모두 존재하지 않으면 None 반환
+                return None
             except Exception as e:
                 logger.exception(f"AI 응답 파싱 실패: {e}")
                 return None
 
         parsed_response = parse_ai_response(response_text)
         if not parsed_response:
-            logger.error(f"{symbol} AI 응답을 파싱할 수 없습니다.")
-            return
+            logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
+            decision = "hold"
+            percentage = 0
+            leverage = 1  # 기본 레버리지 설정
+            reason = "AI 응답이 불완전하여 자동으로 'hold' 결정."
+        else:
+            decision = parsed_response.get('decision')
+            percentage = parsed_response.get('percentage')
+            leverage = parsed_response.get('leverage')
+            reason = parsed_response.get('reason')
 
-        decision = parsed_response.get('decision')
-        percentage = parsed_response.get('percentage')
-        leverage = parsed_response.get('leverage')
-        reason = parsed_response.get('reason')
-
-        if not decision or reason is None or percentage is None:
-            logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다.")
-            return
+            if not decision or reason is None or percentage is None:
+                logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
+                decision = "hold"
+                percentage = 0
+                leverage = 1
+                reason = "AI 응답이 불완전하여 자동으로 'hold' 결정."
 
         logger.info(f"{symbol} AI Decision: {decision.upper()}")
         logger.info(f"{symbol} Percentage: {percentage}%")
@@ -1017,7 +1032,7 @@ if __name__ == "__main__":
             trading_in_progress = False
             logger.info("트레이딩 작업 종료")
 
-    # 스케줄링 주기 유지: 매 시간 1분에 실행
+    # 스케줄링 주기 유지: 매 1분마다 실행
     schedule.every(1).minutes.do(job)
 
     logger.info("스케줄러 설정 완료")
