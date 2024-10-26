@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
 
-# 로깅 설정 - 운영 환경에서는 INFO 또는 WARNING으로 변경
+# 로깅 설정 - 운영 환경에서는 INFO 레벨로 설정
 logging.basicConfig(
     level=logging.INFO,  # DEBUG에서 INFO로 변경
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -245,6 +245,33 @@ Example Response:
 }
 """
 
+        # 현재 포지션 상태 확인
+        current_position = {
+            "long": bool(trades_df['btc_balance'].iloc[-1] > 0),
+            "short": bool(trades_df['btc_balance'].iloc[-1] < 0)
+        }
+
+        # AI 프롬프트 수정: 현재 포지션 상태를 고려하여 가능한 결정 제한
+        if current_position["long"]:
+            possible_decisions = """
+Possible decisions:
+- "close_long": 롱 포지션 청산
+- "hold": 관망하기
+"""
+        elif current_position["short"]:
+            possible_decisions = """
+Possible decisions:
+- "close_short": 숏 포지션 청산
+- "hold": 관망하기
+"""
+        else:
+            possible_decisions = """
+Possible decisions:
+- "open_long": 롱 포지션 열기
+- "open_short": 숏 포지션 열기
+- "hold": 관망하기
+"""
+
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
@@ -255,12 +282,7 @@ Example Response:
                 {
                     "role": "user",
                     "content": f"""
-Possible decisions:
-- "open_long": 롱 포지션 열기
-- "close_long": 롱 포지션 청산
-- "open_short": 숏 포지션 열기
-- "close_short": 숏 포지션 청산
-- "hold": 관망하기
+{possible_decisions}
 
 레버리지는 1에서 10 사이의 정수로 설정하며, 새로운 포지션을 열 때만 포함합니다.
 
@@ -274,18 +296,18 @@ Possible decisions:
                 {
                     "role": "user",
                     "content": f"""
-현재 포지션: 롱 - {long_position}, 숏 - {short_position}
-사용 가능한 USDT 잔고: {usdt_balance}
-오더북 요약: {json.dumps(orderbook)}
-일일 OHLCV 요약: {json.dumps(df_daily_recent.describe().to_dict())}
-시간별 OHLCV 요약: {json.dumps(df_hourly_recent.describe().to_dict())}
+현재 포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
+사용 가능한 USDT 잔고: {current_market_data['daily_ohlcv']}
+오더북 요약: {json.dumps(current_market_data['orderbook'])}
+일일 OHLCV 요약: {json.dumps(current_market_data['daily_ohlcv'])}
+시간별 OHLCV 요약: {json.dumps(current_market_data['hourly_ohlcv'])}
 """
                 }
             ],
-            max_tokens=150,  # 최대 토큰 수 제한
+            max_tokens=100,  # 최대 토큰 수 제한을 더 낮게 설정
             n=1,
             stop=None,
-            temperature=0.3  # 응답의 창의성 조절
+            temperature=0.2  # 응답의 창의성 조절
         )
         logger.info("OpenAI API 호출 성공")
         response_content = response.choices[0].message.content
@@ -504,52 +526,7 @@ def ai_trading():
         # AI 모델에 반성 내용 제공 및 투자 판단 받기
         logger.info("OpenAI API 호출 준비 완료")
 
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "당신은 비트코인 선물 트레이딩 전문가입니다. 제공된 데이터를 분석하고 현재 시점에서 최선의 행동을 결정하세요."
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Possible decisions:
-- "open_long": 롱 포지션 열기
-- "close_long": 롱 포지션 청산
-- "open_short": 숏 포지션 열기
-- "close_short": 숏 포지션 청산
-- "hold": 관망하기
-
-레버리지는 1에서 10 사이의 정수로 설정하며, 새로운 포지션을 열 때만 포함합니다.
-
-다음과 같은 JSON 형식으로 응답하세요:
-
-{examples}
-
-투자 판단을 내려주세요.
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-현재 포지션: 롱 - {long_position}, 숏 - {short_position}
-사용 가능한 USDT 잔고: {usdt_balance}
-오더북 요약: {json.dumps(orderbook)}
-일일 OHLCV 요약: {json.dumps(df_daily_recent.describe().to_dict())}
-시간별 OHLCV 요약: {json.dumps(df_hourly_recent.describe().to_dict())}
-"""
-                }
-            ],
-            max_tokens=150,  # 최대 토큰 수 제한
-            n=1,
-            stop=None,
-            temperature=0.3  # 응답의 창의성 조절
-        )
-        logger.info("OpenAI API 호출 성공")
-
-        response_text = response.choices[0].message.content
-        logger.debug(f"AI 응답 내용: {response_text}")
+        response_text = reflection
 
         # AI 응답 파싱
         def parse_ai_response(response_text):
@@ -844,12 +821,8 @@ if __name__ == "__main__":
             trading_in_progress = False
             logger.info("트레이딩 작업 종료")
 
-    # 스케줄링 주기 변경: 매 5분마다 실행
-    schedule.every(5).minutes.do(job)
-
-    # 운영 환경에서는 더 긴 주기로 변경 가능
-    # 예: 매 15분마다 실행
-    # schedule.every(15).minutes.do(job)
+    # 스케줄링 주기 유지: 매 1분마다 실행
+    schedule.every(1).minutes.do(job)
 
     logger.info("스케줄러 설정 완료")
 
