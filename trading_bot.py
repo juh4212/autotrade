@@ -354,7 +354,8 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
         try:
             records = response['result']['list']
             df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            # 밀리초 단위를 지정하여 datetime 변환
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
             df = df.astype(float)
             logger.debug(f"OHLCV 데이터 조회 성공 - 총 {len(df)}건")
@@ -406,7 +407,7 @@ def ai_trading():
                         break
             elif isinstance(coin_info, dict):
                 if coin_info.get('coin') == 'USDT':
-                    usdt_balance = float(coin.get('availableToWithdraw', '0'))
+                    usdt_balance = float(coin_info.get('availableToWithdraw', '0'))
             if usdt_balance is not None:
                 break
 
@@ -428,7 +429,10 @@ def ai_trading():
             logger.error(f"오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
             orderbook = None
         else:
-            orderbook = response['result']['order_book']
+            orderbook = {
+                'bids': response['result']['b'],
+                'asks': response['result']['a']
+            }
             logger.debug(f"오더북 데이터: {orderbook}")
     except Exception as e:
         logger.exception(f"오더북 조회 실패: {e}")
