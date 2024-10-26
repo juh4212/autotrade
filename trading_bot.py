@@ -15,10 +15,14 @@ from pymongo import MongoClient
 from urllib.parse import quote_plus
 import hashlib
 import hmac
+from dotenv import load_dotenv
+
+# 환경 변수 로드 (.env 파일 사용 시)
+load_dotenv()
 
 # 로깅 설정 - 로그 레벨을 DEBUG로 설정하고, 콘솔에만 출력
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG,  # 운영 시 INFO 또는 WARNING으로 변경 권장
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()
@@ -391,8 +395,14 @@ def ai_trading():
         if not response or response.get('retCode') != 0:
             logger.error(f"잔고 조회 오류: {response.get('retMsg') if response else 'No response'}")
             return
-        usdt_balance = float(response['result']['USDT']['availableBalance'])
-        logger.debug(f"USDT 잔고: {usdt_balance}")
+        # 'list'는 리스트이므로, 'USDT' 코인을 찾기 위해 순회
+        usdt_entry = next((item for item in response['result']['list'] if item['coin'] == 'USDT'), None)
+        if usdt_entry and 'availableBalance' in usdt_entry:
+            usdt_balance = float(usdt_entry['availableBalance'])
+            logger.debug(f"USDT 잔고: {usdt_balance}")
+        else:
+            logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
+            return
     except Exception as e:
         logger.exception(f"잔고 조회 실패: {e}")
         return
@@ -588,10 +598,10 @@ Possible decisions:
                 else:
                     # JSON 형식이 아닐 경우 텍스트에서 정보 추출
                     logger.debug("응답이 JSON 형식이 아님, 텍스트에서 정보 추출 시도")
-                    decision_match = re.search(r'Decision:\s*(\w+)', response_text, re.IGNORECASE)
-                    percentage_match = re.search(r'Percentage:\s*(\d+)', response_text, re.IGNORECASE)
-                    leverage_match = re.search(r'Leverage:\s*(\d+)', response_text, re.IGNORECASE)
-                    reason_match = re.search(r'Reason:\s*(.*)', response_text, re.IGNORECASE)
+                    decision_match = re.search(r'"decision"\s*:\s*"(\w+)"', response_text, re.IGNORECASE)
+                    percentage_match = re.search(r'"percentage"\s*:\s*(\d+)', response_text, re.IGNORECASE)
+                    leverage_match = re.search(r'"leverage"\s*:\s*(\d+)', response_text, re.IGNORECASE)
+                    reason_match = re.search(r'"reason"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
                     decision = decision_match.group(1) if decision_match else None
                     percentage = int(percentage_match.group(1)) if percentage_match else None
                     leverage = int(leverage_match.group(1)) if leverage_match else None
@@ -792,7 +802,12 @@ Possible decisions:
                 if not response or response.get('retCode') != 0:
                     logger.error(f"잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
-                usdt_balance = float(response['result']['USDT']['availableBalance'])
+                usdt_entry = next((item for item in response['result']['list'] if item['coin'] == 'USDT'), None)
+                if usdt_entry and 'availableBalance' in usdt_entry:
+                    usdt_balance = float(usdt_entry['availableBalance'])
+                else:
+                    logger.error("USDT 잔고 정보를 찾을 수 없습니다.")
+                    return
 
                 # BTC 잔고 계산
                 btc_balance = (float(long_position['size']) if long_position else 0) - \
