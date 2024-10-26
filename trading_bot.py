@@ -11,14 +11,12 @@ from datetime import datetime, timedelta
 import openai
 import ta
 from ta.utils import dropna
-from pymongo import MongoClient
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 from urllib.parse import quote_plus
 import hashlib
 import hmac
 from dotenv import load_dotenv
-import ssl
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
@@ -151,18 +149,15 @@ def init_db():
     # 비밀번호를 URL 인코딩
     encoded_password = quote_plus(db_password)
 
-    # MongoDB Atlas 연결 문자열 구성
-    mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster1.tbzg2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster1"
+    # MongoDB 연결 URI (환경 변수로부터 가져오도록 수정)
+    mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster0.7lcywne.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
     try:
-        # SSL 컨텍스트 생성 및 TLS 1.2 강제 설정
-        ssl_context = ssl.create_default_context()
-        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-
-        # MongoDB 클라이언트 생성
-        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000, ssl=True, ssl_cert_reqs=ssl.CERT_REQUIRED, ssl_context=ssl_context)
+        # MongoClient 생성 시 ServerApi 사용
+        client = MongoClient(uri=mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
+        
         # 서버 정보 조회로 연결 확인
-        client.server_info()
+        client.admin.command('ping')
         db = client['bitcoin_trades_db']
         trades_collection = db['trades']
         logger.debug("MongoDB에 성공적으로 연결되었습니다.")
