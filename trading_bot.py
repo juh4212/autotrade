@@ -23,7 +23,7 @@ load_dotenv()
 # 로깅 설정 - 운영 환경에서는 INFO 레벨로 설정
 logging.basicConfig(
     level=logging.INFO,  # DEBUG에서 INFO로 변경
-    format='%(asctime)s - %(name)s - %(levellevel)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()
     ]
@@ -228,6 +228,25 @@ def calculate_performance(trades_df):
         logger.exception(f"퍼포먼스 계산 실패: {e}")
         return 0
 
+# 퍼포먼스 기반 포지션 크기 조정 함수
+def adjust_position_size(performance, base_percentage=20):
+    """
+    퍼포먼스에 따라 포지션 크기 조정
+    - 손실 시 포지션 크기 10% 감소
+    - 이익 시 포지션 크기 10% 증가
+    """
+    if performance < 0:
+        # 손실이 발생했을 경우 포지션 크기 10% 감소
+        adjusted_percentage = max(10, base_percentage - 10)
+        logger.info(f"퍼포먼스가 음수이므로 진입 비율을 {adjusted_percentage}%로 감소시킵니다.")
+        return adjusted_percentage
+    elif performance > 0:
+        # 이익이 발생했을 경우 포지션 크기 10% 증가
+        adjusted_percentage = min(30, base_percentage + 10)
+        logger.info(f"퍼포먼스가 양수이므로 진입 비율을 {adjusted_percentage}%로 증가시킵니다.")
+        return adjusted_percentage
+    return base_percentage
+
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(symbol, trades_df, current_market_data):
     logger.info(f"generate_reflection 함수 시작 - {symbol}")
@@ -242,14 +261,13 @@ def generate_reflection(symbol, trades_df, current_market_data):
     try:
         # 프롬프트 최적화를 위해 예시 응답 간소화
         examples = """
-Example Response:
 {
   "decision": "hold",
   "percentage": 20,
   "leverage": 5,
   "reason": "Market indicators are favorable, entering a long position with moderate leverage."
 }
-"""
+        """
 
         # 현재 포지션 상태 확인
         current_position = {
@@ -278,6 +296,10 @@ Possible decisions:
 - "hold": 관망하기
 """
 
+        # 퍼포먼스 기반 포지션 크기 조정
+        adjusted_percentage = adjust_position_size(performance)
+        logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
+
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
@@ -291,9 +313,9 @@ Possible decisions:
 {possible_decisions}
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
+진입 비율은 {adjusted_percentage}%로 설정합니다.
 자신 있는 자리라면 진입 비율을 20~30%로, 자신 없는 자리라면 진입 비율을 10~20%로 설정하세요.
 
-진입 비율은 10%에서 30% 사이로 설정합니다.
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
 다음과 같은 JSON 형식으로 응답하세요:
@@ -312,10 +334,11 @@ Possible decisions:
 일일 OHLCV 요약: {json.dumps(current_market_data['daily_ohlcv'])}
 시간별 OHLCV 요약: {json.dumps(current_market_data['hourly_ohlcv'])}
 4시간 OHLCV 요약: {json.dumps(current_market_data['four_hour_ohlcv'])}
+이전 거래 퍼포먼스: {performance:.2f}%
 """
                 }
             ],
-            max_tokens=250,  # 최대 토큰 수를 늘려 더 많은 정보를 반영
+            max_tokens=300,  # 최대 토큰 수를 늘려 더 많은 정보를 반영
             n=1,
             stop=None,
             temperature=0.2  # 응답의 창의성 조절
@@ -947,8 +970,8 @@ if __name__ == "__main__":
             trading_in_progress = False
             logger.info("트레이딩 작업 종료")
 
-    # 스케줄링 주기 유지: 매 1분마다 실행
-    schedule.every(1).minutes.do(job)
+    # 스케줄링 주기 유지: 매 시간 1분에 실행
+    schedule.every().hour.at(":01").do(job)
 
     logger.info("스케줄러 설정 완료")
 
