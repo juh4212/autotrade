@@ -1,5 +1,5 @@
 openai==0.27.8
-pybit==5.7.0
+pybit==5.2.0
 pandas==2.1.0
 ta==0.10.2
 requests==2.31.0
