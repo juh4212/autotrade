@@ -16,15 +16,11 @@ import hashlib
 import hmac
 from dotenv import load_dotenv
 import schedule
-from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from requests.packages.urllib3.util.retry import Retry
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
-
-# 테스트 모드 플래그 설정 (환경 변수로 관리 가능)
-TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
 # 로깅 설정 - DEBUG 레벨로 설정하여 자세한 로그 기록
 logging.basicConfig(
@@ -32,7 +28,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # 콘솔에 로그 출력
-        RotatingFileHandler("logs/trading_bot.log", maxBytes=5*1024*1024, backupCount=5, encoding='utf-8')  # 최대 5MB, 백업 5개
+        logging.FileHandler("trading_bot.log")  # 로그를 파일에도 기록
     ]
 )
 logger = logging.getLogger(__name__)
@@ -53,12 +49,16 @@ logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
-def generate_signature(params, secret):
-    """시그니처 생성"""
+def generate_signature_v5(params, secret):
+    """시그니처 생성 (v5)"""
     try:
-        # 시그니처 생성 시 'sign' 파라미터는 제외
-        params_to_sign = {k: v for k, v in params.items() if k != 'sign'}
-        ordered_params = '&'.join([f"{key}={params_to_sign[key]}" for key in sorted(params_to_sign)])
+        # 'sign' 파라미터는 제외
+        params_to_sign = {k: str(v) for k, v in params.items() if k != 'sign'}
+        # 알파벳 순으로 정렬
+        ordered_keys = sorted(params_to_sign)
+        # 'key=value' 형식으로 결합하고 '&'로 연결
+        ordered_params = '&'.join([f"{key}={params_to_sign[key]}" for key in ordered_keys])
+        # HMAC SHA256 시그니처 생성
         signature = hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
         logger.debug(f"시그니처 생성: {signature} from params: {ordered_params}")
         return signature
@@ -97,8 +97,8 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
                 logger.debug(f"GET 요청: {url} with params: {params}")
                 response = session.get(url, params=params, headers=headers, timeout=10)
             elif method.upper() == 'POST':
-                logger.debug(f"POST 요청: {url} with data: {data}")
-                response = session.post(url, json=data, headers=headers, timeout=10)
+                logger.debug(f"POST 요청: {url} with params: {params} and data: {data}")
+                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
             else:
                 logger.error(f"지원되지 않는 HTTP 메서드: {method}")
                 return None
@@ -106,8 +106,8 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
             logger.debug(f"응답 상태 코드: {response.status_code}")
             logger.debug(f"응답 내용: {response.text}")
 
-            if response.status_code == 503:
-                logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
+            if response.status_code in [503, 504]:
+                logger.warning(f"{response.status_code} 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
                 attempt += 1
                 time.sleep(2 ** attempt)  # 지수 백오프
                 continue
@@ -123,76 +123,75 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
     return None
 
 def get_position(symbol, category="linear"):
-    """포지션 조회"""
+    """포지션 조회 (v5)"""
     logger.debug(f"get_position 호출 - symbol: {symbol}, category: {category}")
     endpoint = "/v5/position/list"
     params = {
-        "apiKey": API_KEY,             # CamelCase로 수정
+        "apiKey": API_KEY,
         "symbol": symbol,
-        "category": category,          # 필수 파라미터
+        "category": category,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recvWindow": 5000             # CamelCase로 수정
+        "recvWindow": 5000
     }
-    params["sign"] = generate_signature(params, API_SECRET)
+    params["sign"] = generate_signature_v5(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_position 응답: {response}")
     return response
 
 def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
-    """잔고 조회"""
+    """잔고 조회 (v5)"""
     logger.debug(f"get_wallet_balance 호출 - coin: {coin}, account_type: {account_type}")
     endpoint = "/v5/account/wallet-balance"
     params = {
-        "apiKey": API_KEY,             # CamelCase로 수정
+        "apiKey": API_KEY,
         "coin": coin,
-        "accountType": account_type,    # CamelCase로 수정
+        "accountType": account_type,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recvWindow": 5000             # CamelCase로 수정
+        "recvWindow": 5000
     }
-    params["sign"] = generate_signature(params, API_SECRET)
+    params["sign"] = generate_signature_v5(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_wallet_balance 응답: {response}")
     return response
 
 def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, category="linear"):
-    """주문 생성"""
+    """주문 생성 (v5)"""
     logger.debug(f"place_order 호출 - symbol: {symbol}, side: {side}, order_type: {order_type}, qty: {qty}, leverage: {leverage}, reduce_only: {reduce_only}, category: {category}")
     endpoint = "/v5/order/create"
     params = {
-        "apiKey": API_KEY,             # CamelCase로 수정
+        "apiKey": API_KEY,
         "symbol": symbol,
-        "side": side,                   # "Buy" or "Sell"
-        "orderType": order_type,        # "Market"
+        "side": side,  # Buy or Sell
+        "orderType": order_type,  # Market
         "qty": qty,
         "timeInForce": "GoodTillCancel",
         "reduceOnly": reduce_only,
-        "category": category,
+        "category": category,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recvWindow": 5000              # CamelCase로 수정
+        "recvWindow": 5000
     }
-    # 레버리지는 새로운 포지션을 열 때만 포함
-    if not reduce_only:
-        params["leverage"] = leverage    # 레버리지 포함
-    params["sign"] = generate_signature(params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', data=params)  # params 제거, data에만 전달
+    # 레버리지는 별도로 설정하는 것이 v5 API에 맞습니다.
+    # place_order 함수에서는 레버리지를 설정하지 않습니다.
+    params["sign"] = generate_signature_v5(params, API_SECRET)
+    response = call_bybit_api(endpoint, method='POST', params=params, data=None)
     logger.debug(f"place_order 응답: {response}")
     return response
 
 def set_leverage(symbol, leverage=5, category="linear"):
-    """레버리지 설정"""
+    """레버리지 설정 (v5)"""
     logger.debug(f"set_leverage 호출 - symbol: {symbol}, leverage: {leverage}, category: {category}")
-    endpoint = "/v5/position/set-leverage"  # 올바른 엔드포인트 사용
+    endpoint = "/v5/account/set-leverage"
     params = {
-        "apiKey": API_KEY,             # CamelCase로 수정
+        "apiKey": API_KEY,
         "symbol": symbol,
         "buyLeverage": leverage,
         "sellLeverage": leverage,
-        "category": category,
+        "category": category,  # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recvWindow": 5000              # CamelCase로 수정
+        "recvWindow": 5000
     }
-    params["sign"] = generate_signature(params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', data=params)  # params 제거, data에만 전달
+    params["sign"] = generate_signature_v5(params, API_SECRET)
+    response = call_bybit_api(endpoint, method='POST', params=params, data=None)
     logger.debug(f"set_leverage 응답: {response}")
     return response
 
@@ -216,7 +215,7 @@ def init_db():
     logger.debug(f"MongoDB URI: {mongo_uri}")
 
     try:
-        # MongoClient 생성 시 ServerApi 사용
+        # MongoClient 생성 시 ServerApi 사용 (uri 키워드 제거)
         client = MongoClient(mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
         
         # 서버 정보 조회로 연결 확인
@@ -322,7 +321,7 @@ def generate_reflection(symbol, trades_df, current_market_data):
     try:
         # 프롬프트 최적화를 위해 예시 응답 간소화
         examples = """
-decision: open_long
+decision: hold
 percentage: 20
 leverage: 5
 reason: Market indicators are favorable, entering a long position with moderate leverage.
@@ -335,67 +334,39 @@ reason: Market indicators are favorable, entering a long position with moderate 
         }
         logger.debug(f"현재 포지션 상태: {current_position}")
 
-        # AI 프롬프트 수정: 'hold' 옵션 제거 (테스트 모드 기준)
-        if TEST_MODE:
-            # 테스트 모드에서는 'hold' 제외
-            if current_position["long"]:
-                possible_decisions = """
+        # AI 프롬프트 수정: 현재 포지션 상태를 고려하여 가능한 결정 제한
+        if current_position["long"]:
+            possible_decisions = """
 Possible decisions:
-- close_long
-- open_short
+- close_long: 롱 포지션 청산
+- hold: 관망하기
 """
-            elif current_position["short"]:
-                possible_decisions = """
+        elif current_position["short"]:
+            possible_decisions = """
 Possible decisions:
-- close_short
-- open_long
-"""
-            else:
-                possible_decisions = """
-Possible decisions:
-- open_long
-- open_short
+- close_short: 숏 포지션 청산
+- hold: 관망하기
 """
         else:
-            # 운영 모드에서는 기존 'hold' 옵션 포함
-            if current_position["long"]:
-                possible_decisions = """
+            possible_decisions = """
 Possible decisions:
-- close_long
-- hold
-"""
-            elif current_position["short"]:
-                possible_decisions = """
-Possible decisions:
-- close_short
-- hold
-"""
-            else:
-                possible_decisions = """
-Possible decisions:
-- open_long
-- open_short
-- hold
+- open_long: 롱 포지션 열기
+- open_short: 숏 포지션 열기
 """
 
         # 퍼포먼스 기반 포지션 크기 조정
         adjusted_percentage = adjust_position_size(performance)
         logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
 
-        # 데이터 축소: 오더북 상위 5개 호가, 핵심 지표만 포함
+        # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
         reduced_orderbook = {
-            "bids": current_market_data['orderbook']['bids'][:5],
-            "asks": current_market_data['orderbook']['asks'][:5]
+            "bids": current_market_data['orderbook']['bids'][:10],
+            "asks": current_market_data['orderbook']['asks'][:10]
         }
 
-        # 필요한 지표만 포함 (예: RSI)
-        rsi_daily = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 0)
-        rsi_hourly = current_market_data['hourly_ohlcv'].get('rsi', {}).get('mean', 0)
-        rsi_4h = current_market_data['four_hour_ohlcv'].get('rsi', {}).get('mean', 0)
-
-        # fib_high_4h와 fib_low_4h를 현재 시장 데이터에 추가
-        fib_high_4h = current_market_data['four_hour_ohlcv'].get('fib_high_4h', 0)
-        fib_low_4h = current_market_data['four_hour_ohlcv'].get('fib_low_4h', 0)
+        recent_daily_ohlcv = current_market_data['daily_ohlcv']
+        recent_hourly_ohlcv = current_market_data['hourly_ohlcv']
+        recent_four_hour_ohlcv = current_market_data['four_hour_ohlcv']
 
         # AI 프롬프트 최적화: 필요한 정보만 포함
         prompt = f"""
@@ -403,36 +374,60 @@ Possible decisions:
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
 진입 비율은 {adjusted_percentage}%로 설정합니다.
+
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
-시장 신호가 명확하지 않거나 애매한 경우에도 'open_long' 또는 'open_short' 결정을 내려주세요.
+시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, 'hold' 결정을 내려주세요.
 
-응답 형식 (예시 참고):
+다음 형식으로 응답하세요 (예시 참고):
+
 {examples}
 
 ---
 
-포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
-USDT 잔고: {current_market_data['usdt_balance']}
+현재 포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
+사용 가능한 USDT 잔고: {current_market_data['usdt_balance']}
 
-오더북 상위 5개 호가:
-Bids: {', '.join([f"{bid[0]}@{bid[1]}" for bid in reduced_orderbook['bids']])}
-Asks: {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
+오더북 상위 10개 호가:
+Bids:
+{', '.join([f"{bid[0]}@{bid[1]}" for bid in reduced_orderbook['bids']])}
+Asks:
+{', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
 
-일일 RSI: {rsi_daily}
-시간별 RSI: {rsi_hourly}
-4시간 RSI: {rsi_4h}
+일일 OHLCV 요약:
+Open: {recent_daily_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_daily_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_daily_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_daily_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_daily_ohlcv.get('volume', {}).get('mean', 0)}
+RSI: {recent_daily_ohlcv.get('rsi', {}).get('mean', 0)}
+MACD: {recent_daily_ohlcv.get('macd', {}).get('mean', 0)}
 
-4시간봉 피보나치 고가 EMA 평균: {fib_high_4h}
-4시간봉 피보나치 저가 EMA 평균: {fib_low_4h}
+시간별 OHLCV 요약:
+Open: {recent_hourly_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_hourly_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_hourly_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_hourly_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_hourly_ohlcv.get('volume', {}).get('mean', 0)}
+RSI: {recent_hourly_ohlcv.get('rsi', {}).get('mean', 0)}
+MACD: {recent_hourly_ohlcv.get('macd', {}).get('mean', 0)}
 
-이전 퍼포먼스: {performance:.2f}%
+4시간 OHLCV 요약:
+Open: {recent_four_hour_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_four_hour_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_four_hour_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_four_hour_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_four_hour_ohlcv.get('volume', {}).get('mean', 0)}
+RSI: {recent_four_hour_ohlcv.get('rsi', {}).get('mean', 0)}
+MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
+
+이전 거래 퍼포먼스: {performance:.2f}%
 """
 
         logger.debug(f"AI 요청 프롬프트:\n{prompt}")
 
         response = openai.ChatCompletion.create(
-            model="gpt-4-turbo",
+            model="gpt-4-turbo",  # 정확한 모델 이름으로 변경
             messages=[
                 {
                     "role": "system",
@@ -443,7 +438,7 @@ Asks: {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
                     "content": prompt
                 }
             ],
-            max_tokens=1500,  # 토큰 수 줄이기
+            max_tokens=2000,  # 최대 토큰 수를 2000으로 설정
             n=1,
             stop=None,
             temperature=0.2  # 응답의 창의성 조절
@@ -457,7 +452,7 @@ Asks: {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
         return None
 
 # 데이터프레임에 보조 지표를 추가하는 함수
-def add_indicators(df, higher_timeframe_df, timeframe="60"):
+def add_indicators(df, higher_timeframe_df):
     logger.info("add_indicators 함수 시작")
     try:
         # 기존 지표들
@@ -544,20 +539,9 @@ def add_indicators(df, higher_timeframe_df, timeframe="60"):
         fib_periods = [5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181]
         fib_ema_prefix = "fib_ema_"
         for period in fib_periods:
-            ema_col_high = fib_ema_prefix + f"high_{period}"
-            ema_col_low = fib_ema_prefix + f"low_{period}"
-            # 4시간봉 고가 EMA 계산
-            df[ema_col_high] = ta.trend.EMAIndicator(close=higher_timeframe_df['high'], window=period).ema_indicator()
-            # 4시간봉 저가 EMA 계산
-            df[ema_col_low] = ta.trend.EMAIndicator(close=higher_timeframe_df['low'], window=period).ema_indicator()
-
-        # 4시간봉 고가 EMA 평균 계산
-        high_ema_cols = [fib_ema_prefix + f"high_{period}" for period in fib_periods]
-        df['fib_high_4h'] = df[high_ema_cols].mean(axis=1)
-
-        # 4시간봉 저가 EMA 평균 계산
-        low_ema_cols = [fib_ema_prefix + f"low_{period}" for period in fib_periods]
-        df['fib_low_4h'] = df[low_ema_cols].mean(axis=1)
+            ema_col = fib_ema_prefix + str(period)
+            # 고차원 데이터의 'high' 사용하여 피보나치 EMA 계산
+            df[ema_col] = ta.trend.EMAIndicator(close=higher_timeframe_df['high'], window=period).ema_indicator()
 
         logger.info("보조 지표 추가 완료")
         return df
@@ -570,7 +554,7 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
     logger.info(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
     endpoint = "/v5/market/kline"
     params = {
-        "category": category,  # 필수 파라미터
+        "category": category,  # 필수 파라미터 추가
         "symbol": symbol,
         "interval": interval,
         "limit": limit
@@ -656,16 +640,8 @@ def ai_trading():
 
         usdt_balance = None
         for item in response.get('result', {}).get('list', []):
-            coin_info = item.get('coin', [])
-            if isinstance(coin_info, list):
-                for coin in coin_info:
-                    if isinstance(coin, dict) and coin.get('coin') == 'USDT':
-                        usdt_balance = float(coin.get('availableToWithdraw', '0'))
-                        break
-            elif isinstance(coin_info, dict):
-                if coin_info.get('coin') == 'USDT':
-                    usdt_balance = float(coin_info.get('availableToWithdraw', '0'))
-            if usdt_balance is not None:
+            if isinstance(item, dict) and item.get('coin') == 'USDT':
+                usdt_balance = float(item.get('availableToWithdraw', '0'))
                 break
 
         if usdt_balance is not None:
@@ -703,7 +679,7 @@ def ai_trading():
             logger.error(f"{symbol} 일일 OHLCV 데이터 조회 실패")
             return
         df_daily = dropna(df_daily)
-        df_daily = add_indicators(df_daily, df_daily, timeframe="D")  # 일일 데이터에 지표 추가
+        df_daily = add_indicators(df_daily, df_daily)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 시간별 데이터")
         df_hourly = get_ohlcv(symbol, interval="60", limit=48, category="linear")  # 2일치 데이터로 축소
@@ -711,7 +687,7 @@ def ai_trading():
             logger.error(f"{symbol} 시간별 OHLCV 데이터 조회 실패")
             return
         df_hourly = dropna(df_hourly)
-        df_hourly = add_indicators(df_hourly, df_hourly, timeframe="60")  # 시간별 데이터에 지표 추가
+        df_hourly = add_indicators(df_hourly, df_hourly)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         # 4시간 데이터 추가
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 4시간 데이터")
@@ -720,7 +696,7 @@ def ai_trading():
             logger.error(f"{symbol} 4시간 OHLCV 데이터 조회 실패")
             return
         df_4h = dropna(df_4h)
-        df_4h = add_indicators(df_4h, df_4h, timeframe="240")  # 4시간 데이터에 지표 추가
+        df_4h = add_indicators(df_4h, df_4h)  # 피보나치 EMA를 위해 4H 데이터 사용
 
         # 최근 데이터만 사용하도록 설정 (메모리 절약)
         df_daily_recent = df_daily.tail(60)
@@ -743,11 +719,7 @@ def ai_trading():
             "orderbook": orderbook,
             "daily_ohlcv": df_daily_recent.describe().to_dict(),  # 요약 통계로 대체
             "hourly_ohlcv": df_hourly_recent.describe().to_dict(),  # 요약 통계로 대체
-            "four_hour_ohlcv": {
-                "rsi": df_4h_recent['rsi'].mean(),
-                "fib_high_4h": df_4h_recent['fib_high_4h'].iloc[-1],
-                "fib_low_4h": df_4h_recent['fib_low_4h'].iloc[-1]
-            }  # 피보나치 EMA 추가를 위해 4H 데이터 요약
+            "four_hour_ohlcv": df_4h_recent.describe().to_dict()  # 피보나치 EMA 추가를 위해 4H 데이터 요약
         }
         logger.debug(f"{symbol} 현재 시장 데이터: {current_market_data}")
 
@@ -810,11 +782,11 @@ def ai_trading():
 
         parsed_response = parse_ai_response(response_text)
         if not parsed_response:
-            logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'open_long' 결정을 내립니다.")
-            decision = "open_long"
-            percentage = 20
-            leverage = 5  # 기본 레버리지 설정
-            reason = "AI 응답이 불완전하여 자동으로 'open_long' 결정."
+            logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
+            decision = "hold"
+            percentage = 0
+            leverage = 1  # 기본 레버리지 설정
+            reason = "AI 응답이 불완전하여 자동으로 'hold' 결정."
         else:
             decision = parsed_response.get('decision')
             percentage = parsed_response.get('percentage')
@@ -822,11 +794,11 @@ def ai_trading():
             reason = parsed_response.get('reason')
 
             if not decision or reason is None or percentage is None:
-                logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'open_long' 결정을 내립니다.")
-                decision = "open_long"
-                percentage = 20
-                leverage = 5
-                reason = "AI 응답이 불완전하여 자동으로 'open_long' 결정."
+                logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
+                decision = "hold"
+                percentage = 0
+                leverage = 1
+                reason = "AI 응답이 불완전하여 자동으로 'hold' 결정."
 
         logger.info(f"{symbol} AI Decision: {decision.upper()}")
         logger.info(f"{symbol} Percentage: {percentage}%")
@@ -834,15 +806,14 @@ def ai_trading():
             logger.info(f"{symbol} Leverage: {leverage}x")
         logger.info(f"{symbol} Decision Reason: {reason}")
 
-        # 신호의 명확성 평가 (예시: 특정 지표의 기준 미달 시 "open_long" 또는 "open_short"로 변경)
+        # 신호의 명확성 평가 (예시: 특정 지표의 기준 미달 시 "hold"로 변경)
         # 이 부분은 실제 전략에 맞게 구현해야 합니다.
-        # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 신호를 변경
+        # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 "hold"
         rsi = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 50)
         logger.debug(f"일일 RSI: {rsi}")
         if not (30 < rsi < 70):
-            logger.info(f"RSI가 {rsi}로, 신호가 애매하여 'open_long' 또는 'open_short'로 결정합니다.")
-            # 임의로 'open_long' 또는 'open_short'를 선택하도록 수정
-            decision = "open_long" if rsi > 50 else "open_short"
+            logger.info(f"RSI가 {rsi}로, 신호가 애매하여 'hold'로 결정합니다.")
+            decision = "hold"
 
         # 현재 포지션 상태
         current_position = {
@@ -851,11 +822,10 @@ def ai_trading():
         }
         logger.debug(f"현재 포지션 상태 (검증 전): {current_position}")
 
-        # AI 결정 검증 및 강제 변경
+        # AI 결정 검증 및 'hold'로 강제 변경
         if not validate_decision(decision, current_position):
-            logger.warning(f"{symbol} 유효하지 않은 결정이므로 기본 결정으로 변경합니다.")
-            # 기본 결정을 'open_long' 또는 'open_short'로 설정
-            decision = "open_long" if rsi > 50 else "open_short"
+            logger.warning(f"{symbol} 유효하지 않은 결정이므로 'hold'로 변경합니다.")
+            decision = "hold"
 
         order_executed = False
 
@@ -876,7 +846,7 @@ def ai_trading():
         # 주문 실행 (Bybit V5 API 사용)
         try:
             if decision == "open_long":
-                # 레버리지 확인
+                # 레버리지 설정
                 if leverage is None:
                     logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
                     return
@@ -916,7 +886,7 @@ def ai_trading():
                             side="Buy",
                             order_type="Market",
                             qty=order_qty,
-                            leverage=leverage,
+                            leverage=leverage,  # v5 API에서는 place_order에 leverage 파라미터가 없으므로 제거
                             reduce_only=False,
                             category="linear"
                         )
@@ -929,8 +899,33 @@ def ai_trading():
                         logger.exception(f"{symbol} 롱 포지션 주문 중 오류 발생: {e}")
                 else:
                     logger.warning(f"{symbol} 롱 주문 실패: USDT 잔고가 부족합니다.")
+            elif decision == "close_long":
+                # 롱 포지션 청산 로직
+                if long_position and float(long_position['size']) > 0:
+                    logger.info(f"{symbol} 롱 포지션 청산 시도")
+                    order_qty = float(long_position['size'])
+                    logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
+                    try:
+                        order = place_order(
+                            symbol=symbol,
+                            side="Sell",
+                            order_type="Market",
+                            qty=order_qty,
+                            leverage=1,  # 청산 시 레버리지 영향 없음
+                            reduce_only=True,
+                            category="linear"
+                        )
+                        if order and order.get('retCode') == 0:
+                            logger.info(f"{symbol} 롱 포지션 청산 성공: {order}")
+                            order_executed = True
+                        else:
+                            logger.error(f"{symbol} 롱 포지션 청산 실패: {order.get('retMsg') if order else 'No response'}")
+                    except Exception as e:
+                        logger.exception(f"{symbol} 롱 포지션 청산 중 오류 발생: {e}")
+                else:
+                    logger.info(f"{symbol} 청산할 롱 포지션이 없습니다.")
             elif decision == "open_short":
-                # 레버리지 확인
+                # 레버리지 설정
                 if leverage is None:
                     logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
                     return
@@ -970,7 +965,7 @@ def ai_trading():
                             side="Sell",
                             order_type="Market",
                             qty=order_qty,
-                            leverage=leverage,
+                            leverage=leverage,  # v5 API에서는 place_order에 leverage 파라미터가 없으므로 제거
                             reduce_only=False,
                             category="linear"
                         )
@@ -983,6 +978,37 @@ def ai_trading():
                         logger.exception(f"{symbol} 숏 포지션 주문 중 오류 발생: {e}")
                 else:
                     logger.warning(f"{symbol} 숏 주문 실패: USDT 잔고가 부족합니다.")
+            elif decision == "close_short":
+                # 숏 포지션 청산 로직
+                if short_position and float(short_position['size']) > 0:
+                    logger.info(f"{symbol} 숏 포지션 청산 시도")
+                    order_qty = float(short_position['size'])
+                    logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
+                    try:
+                        order = place_order(
+                            symbol=symbol,
+                            side="Buy",
+                            order_type="Market",
+                            qty=order_qty,
+                            leverage=1,  # 청산 시 레버리지 영향 없음
+                            reduce_only=True,
+                            category="linear"
+                        )
+                        if order and order.get('retCode') == 0:
+                            logger.info(f"{symbol} 숏 포지션 청산 성공: {order}")
+                            order_executed = True
+                        else:
+                            logger.error(f"{symbol} 숏 포지션 청산 실패: {order.get('retMsg') if order else 'No response'}")
+                    except Exception as e:
+                        logger.exception(f"{symbol} 숏 포지션 청산 중 오류 발생: {e}")
+                else:
+                    logger.info(f"{symbol} 청산할 숏 포지션이 없습니다.")
+            elif decision == "hold":
+                if current_position["long"] or current_position["short"]:
+                    logger.info(f"{symbol} 결정: 관망. 아무 조치도 취하지 않습니다.")
+                else:
+                    logger.warning(f"{symbol} 포지션이 없으므로 'hold' 결정을 무시합니다.")
+                    return
             else:
                 logger.error(f"{symbol} AI로부터 유효하지 않은 결정을 받았습니다.")
                 return
@@ -1009,16 +1035,8 @@ def ai_trading():
                     return
                 usdt_balance = None
                 for item in response.get('result', {}).get('list', []):
-                    coin_info = item.get('coin', [])
-                    if isinstance(coin_info, list):
-                        for coin in coin_info:
-                            if isinstance(coin, dict) and coin.get('coin') == 'USDT':
-                                usdt_balance = float(coin.get('availableToWithdraw', '0'))
-                                break
-                    elif isinstance(coin_info, dict):
-                        if coin_info.get('coin') == 'USDT':
-                            usdt_balance = float(coin_info.get('availableToWithdraw', '0'))
-                    if usdt_balance is not None:
+                    if isinstance(item, dict) and item.get('coin') == 'USDT':
+                        usdt_balance = float(item.get('availableToWithdraw', '0'))
                         break
 
                 if usdt_balance is not None:
@@ -1066,7 +1084,6 @@ if __name__ == "__main__":
         logger.debug(f"BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
         logger.debug(f"MONGODB_PASSWORD: {'***' if os.getenv('MONGODB_PASSWORD') else 'None'}")
         logger.debug(f"OPENAI_API_KEY: {'***' if os.getenv('OPENAI_API_KEY') else 'None'}")
-        logger.debug(f"TEST_MODE: {TEST_MODE}")
 
         # 중복 실행 방지를 위한 변수
         trading_in_progress = False
