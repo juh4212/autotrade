@@ -57,7 +57,7 @@ def create_session():
         total=5,
         backoff_factor=1,  # 지수 백오프 시작 지연 시간 (초)
         status_forcelist=[503, 504],
-        method_whitelist=["HEAD", "GET", "OPTIONS", "POST"]
+        allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
     )
     adapter = HTTPAdapter(max_retries=retries)
     session.mount("https://", adapter)
@@ -1059,8 +1059,8 @@ if __name__ == "__main__":
             trading_in_progress = False
             logger.info("트레이딩 작업 종료")
 
-    # 스케줄링 주기 설정: 매 시간 1분에 실행
-    schedule.every().hour.at(":01").do(job)
+    # 스케줄링 주기 설정: 매 10분마다 실행
+    schedule.every(10).minutes.do(job)
 
     logger.info("스케줄러 설정 완료")
 
