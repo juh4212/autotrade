@@ -1060,7 +1060,7 @@ if __name__ == "__main__":
             logger.info("트레이딩 작업 종료")
 
     # 스케줄링 주기 설정: 매 10분마다 실행
-    schedule.every(1).minutes.do(job)
+    schedule.every(5).minutes.do(job)
 
     logger.info("스케줄러 설정 완료")
 
