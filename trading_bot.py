@@ -16,11 +16,15 @@ import hashlib
 import hmac
 from dotenv import load_dotenv
 import schedule
+from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
+
+# 테스트 모드 플래그 설정 (환경 변수로 관리 가능)
+TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
 # 로깅 설정 - DEBUG 레벨로 설정하여 자세한 로그 기록
 logging.basicConfig(
@@ -28,7 +32,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # 콘솔에 로그 출력
-        logging.FileHandler("logs/trading_bot.log", encoding='utf-8')  # /app/logs/trading_bot.log
+        RotatingFileHandler("logs/trading_bot.log", maxBytes=5*1024*1024, backupCount=5, encoding='utf-8')  # 최대 5MB, 백업 5개
     ]
 )
 logger = logging.getLogger(__name__)
@@ -318,7 +322,7 @@ def generate_reflection(symbol, trades_df, current_market_data):
     try:
         # 프롬프트 최적화를 위해 예시 응답 간소화
         examples = """
-decision: hold
+decision: open_long
 percentage: 20
 leverage: 5
 reason: Market indicators are favorable, entering a long position with moderate leverage.
@@ -331,39 +335,63 @@ reason: Market indicators are favorable, entering a long position with moderate 
         }
         logger.debug(f"현재 포지션 상태: {current_position}")
 
-        # AI 프롬프트 수정: 현재 포지션 상태를 고려하여 가능한 결정 제한
-        if current_position["long"]:
-            possible_decisions = """
+        # AI 프롬프트 수정: 'hold' 옵션 제거 (테스트 모드 기준)
+        if TEST_MODE:
+            # 테스트 모드에서는 'hold' 제외
+            if current_position["long"]:
+                possible_decisions = """
 Possible decisions:
-- close_long: 롱 포지션 청산
-- hold: 관망하기
+- close_long
+- open_short
 """
-        elif current_position["short"]:
-            possible_decisions = """
+            elif current_position["short"]:
+                possible_decisions = """
 Possible decisions:
-- close_short: 숏 포지션 청산
-- hold: 관망하기
+- close_short
+- open_long
+"""
+            else:
+                possible_decisions = """
+Possible decisions:
+- open_long
+- open_short
 """
         else:
-            possible_decisions = """
+            # 운영 모드에서는 기존 'hold' 옵션 포함
+            if current_position["long"]:
+                possible_decisions = """
 Possible decisions:
-- open_long: 롱 포지션 열기
-- open_short: 숏 포지션 열기
+- close_long
+- hold
+"""
+            elif current_position["short"]:
+                possible_decisions = """
+Possible decisions:
+- close_short
+- hold
+"""
+            else:
+                possible_decisions = """
+Possible decisions:
+- open_long
+- open_short
+- hold
 """
 
         # 퍼포먼스 기반 포지션 크기 조정
         adjusted_percentage = adjust_position_size(performance)
         logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
 
-        # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
+        # 데이터 축소: 오더북 상위 5개 호가, 핵심 지표만 포함
         reduced_orderbook = {
-            "bids": current_market_data['orderbook']['bids'][:10],
-            "asks": current_market_data['orderbook']['asks'][:10]
+            "bids": current_market_data['orderbook']['bids'][:5],
+            "asks": current_market_data['orderbook']['asks'][:5]
         }
 
-        recent_daily_ohlcv = current_market_data['daily_ohlcv']
-        recent_hourly_ohlcv = current_market_data['hourly_ohlcv']
-        recent_four_hour_ohlcv = current_market_data['four_hour_ohlcv']
+        # 필요한 지표만 포함 (예: RSI)
+        rsi_daily = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 0)
+        rsi_hourly = current_market_data['hourly_ohlcv'].get('rsi', {}).get('mean', 0)
+        rsi_4h = current_market_data['four_hour_ohlcv'].get('rsi', {}).get('mean', 0)
 
         # AI 프롬프트 최적화: 필요한 정보만 포함
         prompt = f"""
@@ -371,60 +399,33 @@ Possible decisions:
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
 진입 비율은 {adjusted_percentage}%로 설정합니다.
-
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
-시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, 'hold' 결정을 내려주세요.
+시장 신호가 명확하지 않거나 애매한 경우에도 'open_long' 또는 'open_short' 결정을 내려주세요.
 
-다음 형식으로 응답하세요 (예시 참고):
-
+응답 형식 (예시 참고):
 {examples}
 
 ---
 
-현재 포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
-사용 가능한 USDT 잔고: {current_market_data['usdt_balance']}
+포지션: 롱 - {current_position['long']}, 숏 - {current_position['short']}
+USDT 잔고: {current_market_data['usdt_balance']}
 
-오더북 상위 10개 호가:
-Bids:
-{', '.join([f"{bid[0]}@{bid[1]}" for bid in reduced_orderbook['bids']])}
-Asks:
-{', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
+오더북 상위 5개 호가:
+Bids: {', '.join([f"{bid[0]}@{bid[1]}" for bid in reduced_orderbook['bids']])}
+Asks: {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
 
-일일 OHLCV 요약:
-Open: {recent_daily_ohlcv.get('open', {}).get('mean', 0)}
-High: {recent_daily_ohlcv.get('high', {}).get('mean', 0)}
-Low: {recent_daily_ohlcv.get('low', {}).get('mean', 0)}
-Close: {recent_daily_ohlcv.get('close', {}).get('mean', 0)}
-Volume: {recent_daily_ohlcv.get('volume', {}).get('mean', 0)}
-RSI: {recent_daily_ohlcv.get('rsi', {}).get('mean', 0)}
-MACD: {recent_daily_ohlcv.get('macd', {}).get('mean', 0)}
+일일 RSI: {rsi_daily}
+시간별 RSI: {rsi_hourly}
+4시간 RSI: {rsi_4h}
 
-시간별 OHLCV 요약:
-Open: {recent_hourly_ohlcv.get('open', {}).get('mean', 0)}
-High: {recent_hourly_ohlcv.get('high', {}).get('mean', 0)}
-Low: {recent_hourly_ohlcv.get('low', {}).get('mean', 0)}
-Close: {recent_hourly_ohlcv.get('close', {}).get('mean', 0)}
-Volume: {recent_hourly_ohlcv.get('volume', {}).get('mean', 0)}
-RSI: {recent_hourly_ohlcv.get('rsi', {}).get('mean', 0)}
-MACD: {recent_hourly_ohlcv.get('macd', {}).get('mean', 0)}
-
-4시간 OHLCV 요약:
-Open: {recent_four_hour_ohlcv.get('open', {}).get('mean', 0)}
-High: {recent_four_hour_ohlcv.get('high', {}).get('mean', 0)}
-Low: {recent_four_hour_ohlcv.get('low', {}).get('mean', 0)}
-Close: {recent_four_hour_ohlcv.get('close', {}).get('mean', 0)}
-Volume: {recent_four_hour_ohlcv.get('volume', {}).get('mean', 0)}
-RSI: {recent_four_hour_ohlcv.get('rsi', {}).get('mean', 0)}
-MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
-
-이전 거래 퍼포먼스: {performance:.2f}%
+이전 퍼포먼스: {performance:.2f}%
 """
 
         logger.debug(f"AI 요청 프롬프트:\n{prompt}")
 
         response = openai.ChatCompletion.create(
-            model="gpt-4-turbo",  # 정확한 모델 이름으로 변경
+            model="gpt-4-turbo",
             messages=[
                 {
                     "role": "system",
@@ -435,7 +436,7 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
                     "content": prompt
                 }
             ],
-            max_tokens=2000,  # 최대 토큰 수를 2000으로 설정
+            max_tokens=1500,  # 토큰 수 줄이기
             n=1,
             stop=None,
             temperature=0.2  # 응답의 창의성 조절
@@ -787,11 +788,11 @@ def ai_trading():
 
         parsed_response = parse_ai_response(response_text)
         if not parsed_response:
-            logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
-            decision = "hold"
-            percentage = 0
-            leverage = 1  # 기본 레버리지 설정
-            reason = "AI 응답이 불완전하여 자동으로 'hold' 결정."
+            logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'open_long' 결정을 내립니다.")
+            decision = "open_long"
+            percentage = 20
+            leverage = 5  # 기본 레버리지 설정
+            reason = "AI 응답이 불완전하여 자동으로 'open_long' 결정."
         else:
             decision = parsed_response.get('decision')
             percentage = parsed_response.get('percentage')
@@ -799,11 +800,11 @@ def ai_trading():
             reason = parsed_response.get('reason')
 
             if not decision or reason is None or percentage is None:
-                logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
-                decision = "hold"
-                percentage = 0
-                leverage = 1
-                reason = "AI 응답이 불완전하여 자동으로 'hold' 결정."
+                logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'open_long' 결정을 내립니다.")
+                decision = "open_long"
+                percentage = 20
+                leverage = 5
+                reason = "AI 응답이 불완전하여 자동으로 'open_long' 결정."
 
         logger.info(f"{symbol} AI Decision: {decision.upper()}")
         logger.info(f"{symbol} Percentage: {percentage}%")
@@ -811,14 +812,15 @@ def ai_trading():
             logger.info(f"{symbol} Leverage: {leverage}x")
         logger.info(f"{symbol} Decision Reason: {reason}")
 
-        # 신호의 명확성 평가 (예시: 특정 지표의 기준 미달 시 "hold"로 변경)
+        # 신호의 명확성 평가 (예시: 특정 지표의 기준 미달 시 "open_long" 또는 "open_short"로 변경)
         # 이 부분은 실제 전략에 맞게 구현해야 합니다.
-        # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 "hold"
+        # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 신호를 변경
         rsi = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 50)
         logger.debug(f"일일 RSI: {rsi}")
         if not (30 < rsi < 70):
-            logger.info(f"RSI가 {rsi}로, 신호가 애매하여 'hold'로 결정합니다.")
-            decision = "hold"
+            logger.info(f"RSI가 {rsi}로, 신호가 애매하여 'open_long' 또는 'open_short'로 결정합니다.")
+            # 임의로 'open_long' 또는 'open_short'를 선택하도록 수정
+            decision = "open_long" if rsi > 50 else "open_short"
 
         # 현재 포지션 상태
         current_position = {
@@ -827,10 +829,11 @@ def ai_trading():
         }
         logger.debug(f"현재 포지션 상태 (검증 전): {current_position}")
 
-        # AI 결정 검증 및 'hold'로 강제 변경
+        # AI 결정 검증 및 강제 변경
         if not validate_decision(decision, current_position):
-            logger.warning(f"{symbol} 유효하지 않은 결정이므로 'hold'로 변경합니다.")
-            decision = "hold"
+            logger.warning(f"{symbol} 유효하지 않은 결정이므로 기본 결정으로 변경합니다.")
+            # 기본 결정을 'open_long' 또는 'open_short'로 설정
+            decision = "open_long" if rsi > 50 else "open_short"
 
         order_executed = False
 
@@ -904,31 +907,6 @@ def ai_trading():
                         logger.exception(f"{symbol} 롱 포지션 주문 중 오류 발생: {e}")
                 else:
                     logger.warning(f"{symbol} 롱 주문 실패: USDT 잔고가 부족합니다.")
-            elif decision == "close_long":
-                # 롱 포지션 청산 로직
-                if long_position and float(long_position['size']) > 0:
-                    logger.info(f"{symbol} 롱 포지션 청산 시도")
-                    order_qty = float(long_position['size'])
-                    logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
-                    try:
-                        order = place_order(
-                            symbol=symbol,
-                            side="Sell",
-                            order_type="Market",
-                            qty=order_qty,
-                            leverage=1,  # 청산 시 레버리지 영향 없음
-                            reduce_only=True,
-                            category="linear"
-                        )
-                        if order and order.get('retCode') == 0:
-                            logger.info(f"{symbol} 롱 포지션 청산 성공: {order}")
-                            order_executed = True
-                        else:
-                            logger.error(f"{symbol} 롱 포지션 청산 실패: {order.get('retMsg') if order else 'No response'}")
-                    except Exception as e:
-                        logger.exception(f"{symbol} 롱 포지션 청산 중 오류 발생: {e}")
-                else:
-                    logger.info(f"{symbol} 청산할 롱 포지션이 없습니다.")
             elif decision == "open_short":
                 # 레버리지 확인
                 if leverage is None:
@@ -983,37 +961,6 @@ def ai_trading():
                         logger.exception(f"{symbol} 숏 포지션 주문 중 오류 발생: {e}")
                 else:
                     logger.warning(f"{symbol} 숏 주문 실패: USDT 잔고가 부족합니다.")
-            elif decision == "close_short":
-                # 숏 포지션 청산 로직
-                if short_position and float(short_position['size']) > 0:
-                    logger.info(f"{symbol} 숏 포지션 청산 시도")
-                    order_qty = float(short_position['size'])
-                    logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
-                    try:
-                        order = place_order(
-                            symbol=symbol,
-                            side="Buy",
-                            order_type="Market",
-                            qty=order_qty,
-                            leverage=1,  # 청산 시 레버리지 영향 없음
-                            reduce_only=True,
-                            category="linear"
-                        )
-                        if order and order.get('retCode') == 0:
-                            logger.info(f"{symbol} 숏 포지션 청산 성공: {order}")
-                            order_executed = True
-                        else:
-                            logger.error(f"{symbol} 숏 포지션 청산 실패: {order.get('retMsg') if order else 'No response'}")
-                    except Exception as e:
-                        logger.exception(f"{symbol} 숏 포지션 청산 중 오류 발생: {e}")
-                else:
-                    logger.info(f"{symbol} 청산할 숏 포지션이 없습니다.")
-            elif decision == "hold":
-                if current_position["long"] or current_position["short"]:
-                    logger.info(f"{symbol} 결정: 관망. 아무 조치도 취하지 않습니다.")
-                else:
-                    logger.warning(f"{symbol} 포지션이 없으므로 'hold' 결정을 무시합니다.")
-                    return
             else:
                 logger.error(f"{symbol} AI로부터 유효하지 않은 결정을 받았습니다.")
                 return
@@ -1097,6 +1044,7 @@ if __name__ == "__main__":
         logger.debug(f"BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
         logger.debug(f"MONGODB_PASSWORD: {'***' if os.getenv('MONGODB_PASSWORD') else 'None'}")
         logger.debug(f"OPENAI_API_KEY: {'***' if os.getenv('OPENAI_API_KEY') else 'None'}")
+        logger.debug(f"TEST_MODE: {TEST_MODE}")
 
         # 중복 실행 방지를 위한 변수
         trading_in_progress = False
