@@ -95,8 +95,8 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
                 logger.debug(f"GET 요청: {url} with params: {params}")
                 response = session.get(url, params=params, headers=headers, timeout=10)
             elif method.upper() == 'POST':
-                logger.debug(f"POST 요청: {url} with params: {params} and data: {data}")
-                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
+                logger.debug(f"POST 요청: {url} with data: {data}")
+                response = session.post(url, json=data, headers=headers, timeout=10)
             else:
                 logger.error(f"지원되지 않는 HTTP 메서드: {method}")
                 return None
@@ -125,11 +125,11 @@ def get_position(symbol, category="linear"):
     logger.debug(f"get_position 호출 - symbol: {symbol}, category: {category}")
     endpoint = "/v5/position/list"
     params = {
-        "api_key": API_KEY,
+        "apiKey": API_KEY,             # CamelCase로 수정
         "symbol": symbol,
-        "category": category,  # 필수 파라미터 추가
+        "category": category,          # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recv_window": 5000
+        "recvWindow": 5000             # CamelCase로 수정
     }
     params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
@@ -141,11 +141,11 @@ def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
     logger.debug(f"get_wallet_balance 호출 - coin: {coin}, account_type: {account_type}")
     endpoint = "/v5/account/wallet-balance"
     params = {
-        "api_key": API_KEY,
+        "apiKey": API_KEY,             # CamelCase로 수정
         "coin": coin,
-        "account_type": account_type,  # 필수 파라미터 추가
+        "accountType": account_type,    # CamelCase로 수정
         "timestamp": int(time.time() * 1000),
-        "recv_window": 5000
+        "recvWindow": 5000             # CamelCase로 수정
     }
     params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
@@ -157,42 +157,40 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
     logger.debug(f"place_order 호출 - symbol: {symbol}, side: {side}, order_type: {order_type}, qty: {qty}, leverage: {leverage}, reduce_only: {reduce_only}, category: {category}")
     endpoint = "/v5/order/create"
     params = {
-        "api_key": API_KEY,
+        "apiKey": API_KEY,             # CamelCase로 수정
         "symbol": symbol,
-        "side": side,  # Buy or Sell
-        "orderType": order_type,  # Market
+        "side": side,                   # "Buy" or "Sell"
+        "orderType": order_type,        # "Market"
         "qty": qty,
         "timeInForce": "GoodTillCancel",
         "reduceOnly": reduce_only,
-        "category": category,  # 필수 파라미터 추가
+        "category": category,           # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recv_window": 5000
+        "recvWindow": 5000              # CamelCase로 수정
     }
     # 레버리지는 새로운 포지션을 열 때만 포함
     if not reduce_only:
-        # 레버리지를 5으로 고정
-        leverage = 5
-        params["leverage"] = leverage
+        params["leverage"] = leverage    # 레버리지 포함
     params["sign"] = generate_signature(params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
+    response = call_bybit_api(endpoint, method='POST', data=params)  # params 제거, data에만 전달
     logger.debug(f"place_order 응답: {response}")
     return response
 
 def set_leverage(symbol, leverage=5, category="linear"):
     """레버리지 설정"""
     logger.debug(f"set_leverage 호출 - symbol: {symbol}, leverage: {leverage}, category: {category}")
-    endpoint = "/v5/position/set-leverage"  # 엔드포인트 수정
+    endpoint = "/v5/position/set-leverage"  # 올바른 엔드포인트 사용
     params = {
-        "api_key": API_KEY,
+        "apiKey": API_KEY,             # CamelCase로 수정
         "symbol": symbol,
         "buyLeverage": leverage,
         "sellLeverage": leverage,
-        "category": category,  # 필수 파라미터 추가
+        "category": category,           # 필수 파라미터 추가
         "timestamp": int(time.time() * 1000),
-        "recv_window": 5000
+        "recvWindow": 5000              # CamelCase로 수정
     }
     params["sign"] = generate_signature(params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
+    response = call_bybit_api(endpoint, method='POST', data=params)  # params 제거, data에만 전달
     logger.debug(f"set_leverage 응답: {response}")
     return response
 
