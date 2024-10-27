@@ -56,7 +56,9 @@ logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET 
 def generate_signature(params, secret):
     """시그니처 생성"""
     try:
-        ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
+        # 시그니처 생성 시 'sign' 파라미터는 제외
+        params_to_sign = {k: v for k, v in params.items() if k != 'sign'}
+        ordered_params = '&'.join([f"{key}={params_to_sign[key]}" for key in sorted(params_to_sign)])
         signature = hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
         logger.debug(f"시그니처 생성: {signature} from params: {ordered_params}")
         return signature
@@ -127,7 +129,7 @@ def get_position(symbol, category="linear"):
     params = {
         "apiKey": API_KEY,             # CamelCase로 수정
         "symbol": symbol,
-        "category": category,          # 필수 파라미터 추가
+        "category": category,          # 필수 파라미터
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000             # CamelCase로 수정
     }
@@ -164,7 +166,7 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
         "qty": qty,
         "timeInForce": "GoodTillCancel",
         "reduceOnly": reduce_only,
-        "category": category,           # 필수 파라미터 추가
+        "category": category,
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000              # CamelCase로 수정
     }
@@ -185,7 +187,7 @@ def set_leverage(symbol, leverage=5, category="linear"):
         "symbol": symbol,
         "buyLeverage": leverage,
         "sellLeverage": leverage,
-        "category": category,           # 필수 파라미터 추가
+        "category": category,
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000              # CamelCase로 수정
     }
@@ -391,6 +393,10 @@ Possible decisions:
         rsi_hourly = current_market_data['hourly_ohlcv'].get('rsi', {}).get('mean', 0)
         rsi_4h = current_market_data['four_hour_ohlcv'].get('rsi', {}).get('mean', 0)
 
+        # fib_high_4h와 fib_low_4h를 현재 시장 데이터에 추가
+        fib_high_4h = current_market_data['four_hour_ohlcv'].get('fib_high_4h', 0)
+        fib_low_4h = current_market_data['four_hour_ohlcv'].get('fib_low_4h', 0)
+
         # AI 프롬프트 최적화: 필요한 정보만 포함
         prompt = f"""
 {possible_decisions}
@@ -416,6 +422,9 @@ Asks: {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
 일일 RSI: {rsi_daily}
 시간별 RSI: {rsi_hourly}
 4시간 RSI: {rsi_4h}
+
+4시간봉 피보나치 고가 EMA 평균: {fib_high_4h}
+4시간봉 피보나치 저가 EMA 평균: {fib_low_4h}
 
 이전 퍼포먼스: {performance:.2f}%
 """
@@ -448,7 +457,7 @@ Asks: {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
         return None
 
 # 데이터프레임에 보조 지표를 추가하는 함수
-def add_indicators(df, higher_timeframe_df):
+def add_indicators(df, higher_timeframe_df, timeframe="60"):
     logger.info("add_indicators 함수 시작")
     try:
         # 기존 지표들
@@ -535,9 +544,20 @@ def add_indicators(df, higher_timeframe_df):
         fib_periods = [5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181]
         fib_ema_prefix = "fib_ema_"
         for period in fib_periods:
-            ema_col = fib_ema_prefix + str(period)
-            # 고차원 데이터의 'high' 사용하여 피보나치 EMA 계산
-            df[ema_col] = ta.trend.EMAIndicator(close=higher_timeframe_df['high'], window=period).ema_indicator()
+            ema_col_high = fib_ema_prefix + f"high_{period}"
+            ema_col_low = fib_ema_prefix + f"low_{period}"
+            # 4시간봉 고가 EMA 계산
+            df[ema_col_high] = ta.trend.EMAIndicator(close=higher_timeframe_df['high'], window=period).ema_indicator()
+            # 4시간봉 저가 EMA 계산
+            df[ema_col_low] = ta.trend.EMAIndicator(close=higher_timeframe_df['low'], window=period).ema_indicator()
+
+        # 4시간봉 고가 EMA 평균 계산
+        high_ema_cols = [fib_ema_prefix + f"high_{period}" for period in fib_periods]
+        df['fib_high_4h'] = df[high_ema_cols].mean(axis=1)
+
+        # 4시간봉 저가 EMA 평균 계산
+        low_ema_cols = [fib_ema_prefix + f"low_{period}" for period in fib_periods]
+        df['fib_low_4h'] = df[low_ema_cols].mean(axis=1)
 
         logger.info("보조 지표 추가 완료")
         return df
@@ -550,7 +570,7 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
     logger.info(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
     endpoint = "/v5/market/kline"
     params = {
-        "category": category,  # 필수 파라미터 추가
+        "category": category,  # 필수 파라미터
         "symbol": symbol,
         "interval": interval,
         "limit": limit
@@ -683,7 +703,7 @@ def ai_trading():
             logger.error(f"{symbol} 일일 OHLCV 데이터 조회 실패")
             return
         df_daily = dropna(df_daily)
-        df_daily = add_indicators(df_daily, df_daily)  # 4H 데이터가 필요하다면 별도 처리 필요
+        df_daily = add_indicators(df_daily, df_daily, timeframe="D")  # 일일 데이터에 지표 추가
 
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 시간별 데이터")
         df_hourly = get_ohlcv(symbol, interval="60", limit=48, category="linear")  # 2일치 데이터로 축소
@@ -691,7 +711,7 @@ def ai_trading():
             logger.error(f"{symbol} 시간별 OHLCV 데이터 조회 실패")
             return
         df_hourly = dropna(df_hourly)
-        df_hourly = add_indicators(df_hourly, df_hourly)  # 4H 데이터가 필요하다면 별도 처리 필요
+        df_hourly = add_indicators(df_hourly, df_hourly, timeframe="60")  # 시간별 데이터에 지표 추가
 
         # 4시간 데이터 추가
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 4시간 데이터")
@@ -700,7 +720,7 @@ def ai_trading():
             logger.error(f"{symbol} 4시간 OHLCV 데이터 조회 실패")
             return
         df_4h = dropna(df_4h)
-        df_4h = add_indicators(df_4h, df_4h)  # 피보나치 EMA를 위해 4H 데이터 사용
+        df_4h = add_indicators(df_4h, df_4h, timeframe="240")  # 4시간 데이터에 지표 추가
 
         # 최근 데이터만 사용하도록 설정 (메모리 절약)
         df_daily_recent = df_daily.tail(60)
@@ -723,7 +743,11 @@ def ai_trading():
             "orderbook": orderbook,
             "daily_ohlcv": df_daily_recent.describe().to_dict(),  # 요약 통계로 대체
             "hourly_ohlcv": df_hourly_recent.describe().to_dict(),  # 요약 통계로 대체
-            "four_hour_ohlcv": df_4h_recent.describe().to_dict()  # 피보나치 EMA 추가를 위해 4H 데이터 요약
+            "four_hour_ohlcv": {
+                "rsi": df_4h_recent['rsi'].mean(),
+                "fib_high_4h": df_4h_recent['fib_high_4h'].iloc[-1],
+                "fib_low_4h": df_4h_recent['fib_low_4h'].iloc[-1]
+            }  # 피보나치 EMA 추가를 위해 4H 데이터 요약
         }
         logger.debug(f"{symbol} 현재 시장 데이터: {current_market_data}")
 
