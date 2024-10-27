@@ -28,7 +28,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # 콘솔에 로그 출력
-        logging.FileHandler("trading_bot.log", encoding='utf-8')  # 현재 디렉토리에 로그 파일 생성
+        logging.FileHandler("logs/trading_bot.log", encoding='utf-8')  # /app/logs/trading_bot.log
     ]
 )
 logger = logging.getLogger(__name__)
