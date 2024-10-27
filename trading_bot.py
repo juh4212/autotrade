@@ -181,7 +181,7 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
 def set_leverage(symbol, leverage=5, category="linear"):
     """레버리지 설정"""
     logger.debug(f"set_leverage 호출 - symbol: {symbol}, leverage: {leverage}, category: {category}")
-    endpoint = "/v5/account/set-leverage"
+    endpoint = "/v5/position/set-leverage"  # 엔드포인트 수정
     params = {
         "api_key": API_KEY,
         "symbol": symbol,
@@ -216,7 +216,7 @@ def init_db():
     logger.debug(f"MongoDB URI: {mongo_uri}")
 
     try:
-        # MongoClient 생성 시 ServerApi 사용 (uri 키워드 제거)
+        # MongoClient 생성 시 ServerApi 사용
         client = MongoClient(mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
         
         # 서버 정보 조회로 연결 확인
