@@ -1059,8 +1059,21 @@ if __name__ == "__main__":
             trading_in_progress = False
             logger.info("트레이딩 작업 종료")
 
-    # 스케줄링 주기 설정: 매 10분마다 실행
-    schedule.every(5).minutes.do(job)
+    # 초기 실행 후 매 5분마다 실행되도록 스케줄링 설정
+    def initial_and_recurring_schedule():
+        # 첫 번째 실행: 1분 후
+        schedule.every(1).minutes.do(first_run).tag('first_run')
+
+    def first_run():
+        job()
+        # 이후 매 5분마다 실행되도록 설정
+        schedule.every(5).minutes.do(job)
+        # 첫 번째 실행 스케줄 제거
+        schedule.clear('first_run')
+        logger.info("초기 실행 완료. 이후부터는 매 5분마다 실행됩니다.")
+
+    # 스케줄링 초기화
+    initial_and_recurring_schedule()
 
     logger.info("스케줄러 설정 완료")
 
