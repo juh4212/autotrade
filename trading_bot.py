@@ -35,15 +35,8 @@ logger = logging.getLogger(__name__)
 
 logger.info("트레이딩 봇 초기화 시작")
 
-# Bybit V5 API 엔드포인트 설정
-ENVIRONMENT = os.getenv("BYBIT_ENVIRONMENT", "live")  # 'test' 또는 'live'
-if ENVIRONMENT == "test":
-    BASE_URL = "https://api-testnet.bybit.com"
-else:
-    BASE_URL = "https://api.bybit.com"
-
-logger.info(f"사용 중인 환경: {ENVIRONMENT}")
-logger.debug(f"API 엔드포인트: {BASE_URL}")
+# Bybit V5 API 엔드포인트
+BASE_URL = "https://api.bybit.com"
 
 # API 키 및 시크릿
 API_KEY = os.getenv("BYBIT_API_KEY")
@@ -56,12 +49,13 @@ logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
-def generate_signature(params, secret):
+def generate_signature(endpoint, params, secret):
     """시그니처 생성"""
     try:
         ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
-        signature = hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
-        logger.debug(f"시그니처 생성: {signature} from params: {ordered_params}")
+        signature_payload = endpoint + ordered_params
+        signature = hmac.new(secret.encode(), signature_payload.encode(), hashlib.sha256).hexdigest()
+        logger.debug(f"시그니처 생성: {signature} from payload: {signature_payload}")
         return signature
     except Exception as e:
         logger.exception(f"시그니처 생성 중 오류 발생: {e}")
@@ -87,13 +81,30 @@ def create_session():
 def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
     """Bybit V5 API 호출 함수"""
     url = BASE_URL + endpoint
-    headers = {
-        "Content-Type": "application/json"
-    }
     session = create_session()
     attempt = 0
     while attempt < max_retries:
         try:
+            headers = {
+                "Content-Type": "application/json"
+            }
+
+            if params is None:
+                params = {}
+
+            # 인증 헤더 설정
+            if "apiKey" in params:
+                auth_params = {
+                    "X-BAPI-API-KEY": API_KEY,
+                    "X-BAPI-TIMESTAMP": str(int(time.time() * 1000)),
+                    "X-BAPI-RECV-WINDOW": str(params.get("recvWindow", 5000))
+                }
+                signature = generate_signature(endpoint, params, API_SECRET)
+                auth_params["X-BAPI-SIGN"] = signature
+                headers.update(auth_params)
+                # Remove authentication params from query
+                params = {k: v for k, v in params.items() if k not in ["apiKey", "timestamp", "recvWindow", "sign"]}
+
             if method.upper() == 'GET':
                 logger.debug(f"GET 요청: {url} with params: {params}")
                 response = session.get(url, params=params, headers=headers, timeout=10)
@@ -134,7 +145,7 @@ def get_position(symbol, category="linear"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(params, API_SECRET)
+    params["sign"] = generate_signature(endpoint, params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_position 응답: {response}")
     return response
@@ -150,7 +161,7 @@ def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(params, API_SECRET)
+    params["sign"] = generate_signature(endpoint, params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_wallet_balance 응답: {response}")
     return response
@@ -174,7 +185,7 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
     # 레버리지는 새로운 포지션을 열 때만 포함
     if not reduce_only:
         params["leverage"] = leverage
-    params["sign"] = generate_signature(params, API_SECRET)
+    params["sign"] = generate_signature(endpoint, params, API_SECRET)
     response = call_bybit_api(endpoint, method='POST', params=params, data=params)
     logger.debug(f"place_order 응답: {response}")
     return response
@@ -192,7 +203,7 @@ def set_leverage(symbol, leverage=5, category="linear"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(params, API_SECRET)
+    params["sign"] = generate_signature(endpoint, params, API_SECRET)
     response = call_bybit_api(endpoint, method='POST', params=params, data=params)
     logger.debug(f"set_leverage 응답: {response}")
     return response
@@ -666,7 +677,7 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 오더북 조회 시도")
-        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": symbol, "limit": 10, "category": "linear"})
+        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": symbol, "limit": 10, "category": "linear", "apiKey": API_KEY, "recvWindow": 5000})
         logger.debug(f"{symbol} 오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -842,7 +853,7 @@ def ai_trading():
         # 현재 가격 가져오기 (Bybit V5 API 사용)
         try:
             logger.info(f"{symbol} 현재 가격 데이터 조회 시도")
-            response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": symbol, "category": "linear"})
+            response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": symbol, "category": "linear", "apiKey": API_KEY, "recvWindow": 5000})
             logger.debug(f"{symbol} 현재 가격 조회 응답: {response}")
             if not response or response.get('retCode') != 0:
                 logger.error(f"{symbol} 현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
