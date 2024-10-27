@@ -35,8 +35,15 @@ logger = logging.getLogger(__name__)
 
 logger.info("트레이딩 봇 초기화 시작")
 
-# Bybit V5 API 엔드포인트
-BASE_URL = "https://api.bybit.com"
+# Bybit V5 API 엔드포인트 설정
+ENVIRONMENT = os.getenv("BYBIT_ENVIRONMENT", "live")  # 'test' 또는 'live'
+if ENVIRONMENT == "test":
+    BASE_URL = "https://api-testnet.bybit.com"
+else:
+    BASE_URL = "https://api.bybit.com"
+
+logger.info(f"사용 중인 환경: {ENVIRONMENT}")
+logger.debug(f"API 엔드포인트: {BASE_URL}")
 
 # API 키 및 시크릿
 API_KEY = os.getenv("BYBIT_API_KEY")
@@ -49,13 +56,12 @@ logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
-def generate_signature(endpoint, params, secret):
+def generate_signature(params, secret):
     """시그니처 생성"""
     try:
         ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
-        signature_payload = endpoint + ordered_params
-        signature = hmac.new(secret.encode(), signature_payload.encode(), hashlib.sha256).hexdigest()
-        logger.debug(f"시그니처 생성: {signature} from payload: {signature_payload}")
+        signature = hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
+        logger.debug(f"시그니처 생성: {signature} from params: {ordered_params}")
         return signature
     except Exception as e:
         logger.exception(f"시그니처 생성 중 오류 발생: {e}")
@@ -128,7 +134,7 @@ def get_position(symbol, category="linear"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
+    params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_position 응답: {response}")
     return response
@@ -144,7 +150,7 @@ def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
+    params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_wallet_balance 응답: {response}")
     return response
@@ -168,7 +174,7 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
     # 레버리지는 새로운 포지션을 열 때만 포함
     if not reduce_only:
         params["leverage"] = leverage
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
+    params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='POST', params=params, data=params)
     logger.debug(f"place_order 응답: {response}")
     return response
@@ -186,7 +192,7 @@ def set_leverage(symbol, leverage=5, category="linear"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
+    params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='POST', params=params, data=params)
     logger.debug(f"set_leverage 응답: {response}")
     return response
