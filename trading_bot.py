@@ -15,6 +15,7 @@ from urllib.parse import quote_plus
 import hashlib
 import hmac
 from dotenv import load_dotenv
+import schedule
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
@@ -1022,7 +1023,7 @@ if __name__ == "__main__":
     trading_in_progress = False
 
     # 트레이딩 작업을 수행하는 함수
-    def job(interval_hours):
+    def job():
         global trading_in_progress
         if trading_in_progress:
             logger.warning("Trading job is already in progress, skipping this run.")
@@ -1036,26 +1037,16 @@ if __name__ == "__main__":
         finally:
             trading_in_progress = False
             logger.info("트레이딩 작업 종료")
-        # 다음 실행을 위해 현재 인터벌을 반환
-        return interval_hours + 1
 
-    # 초기 인터벌 설정 (1시간 1분)
-    current_interval_hours = 1
-    current_interval_minutes = 1
+    # 스케줄링 주기 설정: 매 시간 1분에 실행
+    schedule.every().hour.at(":01").do(job)
 
     logger.info("스케줄러 설정 완료")
 
     while True:
         try:
-            logger.info(f"다음 트레이딩 작업까지 대기 시간: {current_interval_hours}시간 {current_interval_minutes}분")
-            # 대기 시간 계산
-            sleep_time = timedelta(hours=current_interval_hours, minutes=current_interval_minutes).total_seconds()
-            time.sleep(sleep_time)
-            # 트레이딩 작업 수행
-            job(current_interval_hours)
-            # 인터벌 증가
-            current_interval_hours += 1
+            schedule.run_pending()
+            time.sleep(1)
         except Exception as e:
-            logger.exception(f"메인 루프 중 오류 발생: {e}")
-            logger.info("잠시 대기 후 재시작합니다.")
+            logger.exception(f"스케줄러 루프 중 오류 발생: {e}")
             time.sleep(5)  # 잠시 대기 후 재시작
