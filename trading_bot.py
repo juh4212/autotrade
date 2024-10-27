@@ -16,6 +16,8 @@ import hashlib
 import hmac
 from dotenv import load_dotenv
 import schedule
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
@@ -48,34 +50,53 @@ def generate_signature(params, secret):
     ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
     return hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
 
+# 세션 생성 및 재시도 설정
+def create_session():
+    session = requests.Session()
+    retries = Retry(
+        total=5,
+        backoff_factor=1,  # 지수 백오프 시작 지연 시간 (초)
+        status_forcelist=[503, 504],
+        method_whitelist=["HEAD", "GET", "OPTIONS", "POST"]
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
 # Bybit V5 API 호출 함수
-def call_bybit_api(endpoint, method='GET', params=None, data=None):
+def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
     """Bybit V5 API 호출 함수"""
     url = BASE_URL + endpoint
     headers = {
         "Content-Type": "application/json"
     }
-    if params is None:
-        params = {}
-    if method.upper() == 'GET':
+    session = create_session()
+    attempt = 0
+    while attempt < max_retries:
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            if method.upper() == 'GET':
+                response = session.get(url, params=params, headers=headers, timeout=10)
+            elif method.upper() == 'POST':
+                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
+            else:
+                logger.error(f"지원되지 않는 HTTP 메서드: {method}")
+                return None
+
+            if response.status_code == 503:
+                logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
+                attempt += 1
+                time.sleep(2 ** attempt)  # 지수 백오프
+                continue
+
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.exception(f"API 호출 실패: {e}")
-            return None
-    elif method.upper() == 'POST':
-        try:
-            response = requests.post(url, params=params, json=data, headers=headers, timeout=10)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.exception(f"API 호출 실패: {e}")
-            return None
-    else:
-        logger.error(f"지원되지 않는 HTTP 메서드: {method}")
-        return None
+            logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
+            attempt += 1
+            time.sleep(2 ** attempt)  # 지수 백오프
+    logger.error(f"API 호출 실패: {url} - {method}")
+    return None
 
 def get_position(symbol, category="linear"):
     """포지션 조회"""
@@ -1049,4 +1070,5 @@ if __name__ == "__main__":
             time.sleep(1)
         except Exception as e:
             logger.exception(f"스케줄러 루프 중 오류 발생: {e}")
+            logger.info("잠시 대기 후 재시작합니다.")
             time.sleep(5)  # 잠시 대기 후 재시작
