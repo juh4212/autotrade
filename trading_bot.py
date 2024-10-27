@@ -49,16 +49,10 @@ logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
-def generate_signature_v5(params, secret):
-    """시그니처 생성 (v5)"""
+def generate_signature(params, secret):
+    """시그니처 생성"""
     try:
-        # 'sign' 파라미터는 제외
-        params_to_sign = {k: str(v) for k, v in params.items() if k != 'sign'}
-        # 알파벳 순으로 정렬
-        ordered_keys = sorted(params_to_sign)
-        # 'key=value' 형식으로 결합하고 '&'로 연결
-        ordered_params = '&'.join([f"{key}={params_to_sign[key]}" for key in ordered_keys])
-        # HMAC SHA256 시그니처 생성
+        ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
         signature = hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
         logger.debug(f"시그니처 생성: {signature} from params: {ordered_params}")
         return signature
@@ -106,8 +100,8 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
             logger.debug(f"응답 상태 코드: {response.status_code}")
             logger.debug(f"응답 내용: {response.text}")
 
-            if response.status_code in [503, 504]:
-                logger.warning(f"{response.status_code} 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
+            if response.status_code == 503:
+                logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
                 attempt += 1
                 time.sleep(2 ** attempt)  # 지수 백오프
                 continue
@@ -123,7 +117,7 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
     return None
 
 def get_position(symbol, category="linear"):
-    """포지션 조회 (v5)"""
+    """포지션 조회"""
     logger.debug(f"get_position 호출 - symbol: {symbol}, category: {category}")
     endpoint = "/v5/position/list"
     params = {
@@ -133,13 +127,13 @@ def get_position(symbol, category="linear"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature_v5(params, API_SECRET)
+    params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_position 응답: {response}")
     return response
 
 def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
-    """잔고 조회 (v5)"""
+    """잔고 조회"""
     logger.debug(f"get_wallet_balance 호출 - coin: {coin}, account_type: {account_type}")
     endpoint = "/v5/account/wallet-balance"
     params = {
@@ -149,13 +143,13 @@ def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature_v5(params, API_SECRET)
+    params["sign"] = generate_signature(params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_wallet_balance 응답: {response}")
     return response
 
 def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, category="linear"):
-    """주문 생성 (v5)"""
+    """주문 생성"""
     logger.debug(f"place_order 호출 - symbol: {symbol}, side: {side}, order_type: {order_type}, qty: {qty}, leverage: {leverage}, reduce_only: {reduce_only}, category: {category}")
     endpoint = "/v5/order/create"
     params = {
@@ -170,15 +164,16 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    # 레버리지는 별도로 설정하는 것이 v5 API에 맞습니다.
-    # place_order 함수에서는 레버리지를 설정하지 않습니다.
-    params["sign"] = generate_signature_v5(params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', params=params, data=None)
+    # 레버리지는 새로운 포지션을 열 때만 포함
+    if not reduce_only:
+        params["leverage"] = leverage
+    params["sign"] = generate_signature(params, API_SECRET)
+    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
     logger.debug(f"place_order 응답: {response}")
     return response
 
 def set_leverage(symbol, leverage=5, category="linear"):
-    """레버리지 설정 (v5)"""
+    """레버리지 설정"""
     logger.debug(f"set_leverage 호출 - symbol: {symbol}, leverage: {leverage}, category: {category}")
     endpoint = "/v5/account/set-leverage"
     params = {
@@ -190,8 +185,8 @@ def set_leverage(symbol, leverage=5, category="linear"):
         "timestamp": int(time.time() * 1000),
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature_v5(params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', params=params, data=None)
+    params["sign"] = generate_signature(params, API_SECRET)
+    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
     logger.debug(f"set_leverage 응답: {response}")
     return response
 
@@ -640,8 +635,16 @@ def ai_trading():
 
         usdt_balance = None
         for item in response.get('result', {}).get('list', []):
-            if isinstance(item, dict) and item.get('coin') == 'USDT':
-                usdt_balance = float(item.get('availableToWithdraw', '0'))
+            coin_info = item.get('coin', [])
+            if isinstance(coin_info, list):
+                for coin in coin_info:
+                    if isinstance(coin, dict) and coin.get('coin') == 'USDT':
+                        usdt_balance = float(coin.get('availableToWithdraw', '0'))
+                        break
+            elif isinstance(coin_info, dict):
+                if coin_info.get('coin') == 'USDT':
+                    usdt_balance = float(coin_info.get('availableToWithdraw', '0'))
+            if usdt_balance is not None:
                 break
 
         if usdt_balance is not None:
@@ -846,7 +849,7 @@ def ai_trading():
         # 주문 실행 (Bybit V5 API 사용)
         try:
             if decision == "open_long":
-                # 레버리지 설정
+                # 레버리지 확인
                 if leverage is None:
                     logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
                     return
@@ -886,7 +889,7 @@ def ai_trading():
                             side="Buy",
                             order_type="Market",
                             qty=order_qty,
-                            leverage=leverage,  # v5 API에서는 place_order에 leverage 파라미터가 없으므로 제거
+                            leverage=leverage,
                             reduce_only=False,
                             category="linear"
                         )
@@ -925,7 +928,7 @@ def ai_trading():
                 else:
                     logger.info(f"{symbol} 청산할 롱 포지션이 없습니다.")
             elif decision == "open_short":
-                # 레버리지 설정
+                # 레버리지 확인
                 if leverage is None:
                     logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
                     return
@@ -965,7 +968,7 @@ def ai_trading():
                             side="Sell",
                             order_type="Market",
                             qty=order_qty,
-                            leverage=leverage,  # v5 API에서는 place_order에 leverage 파라미터가 없으므로 제거
+                            leverage=leverage,
                             reduce_only=False,
                             category="linear"
                         )
@@ -1035,8 +1038,16 @@ def ai_trading():
                     return
                 usdt_balance = None
                 for item in response.get('result', {}).get('list', []):
-                    if isinstance(item, dict) and item.get('coin') == 'USDT':
-                        usdt_balance = float(item.get('availableToWithdraw', '0'))
+                    coin_info = item.get('coin', [])
+                    if isinstance(coin_info, list):
+                        for coin in coin_info:
+                            if isinstance(coin, dict) and coin.get('coin') == 'USDT':
+                                usdt_balance = float(coin.get('availableToWithdraw', '0'))
+                                break
+                    elif isinstance(coin_info, dict):
+                        if coin_info.get('coin') == 'USDT':
+                            usdt_balance = float(coin_info.get('availableToWithdraw', '0'))
+                    if usdt_balance is not None:
                         break
 
                 if usdt_balance is not None:
