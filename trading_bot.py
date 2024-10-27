@@ -22,15 +22,18 @@ from requests.packages.urllib3.util.retry import Retry
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
 
-# 로깅 설정 - 운영 환경에서는 INFO 레벨로 설정
+# 로깅 설정 - DEBUG 레벨로 설정하여 자세한 로그 기록
 logging.basicConfig(
-    level=logging.INFO,  # DEBUG에서 INFO로 변경
+    level=logging.DEBUG,  # DEBUG 레벨로 변경하여 모든 로그 기록
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()
+        logging.StreamHandler(),  # 콘솔에 로그 출력
+        logging.FileHandler("trading_bot.log")  # 로그를 파일에도 기록
     ]
 )
 logger = logging.getLogger(__name__)
+
+logger.info("트레이딩 봇 초기화 시작")
 
 # Bybit V5 API 엔드포인트
 BASE_URL = "https://api.bybit.com"
@@ -43,15 +46,23 @@ if not API_KEY or not API_SECRET:
     raise ValueError("Missing API keys. Please check your environment variables.")
 
 logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
+logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
 def generate_signature(params, secret):
     """시그니처 생성"""
-    ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
-    return hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
+    try:
+        ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
+        signature = hmac.new(secret.encode(), ordered_params.encode(), hashlib.sha256).hexdigest()
+        logger.debug(f"시그니처 생성: {signature} from params: {ordered_params}")
+        return signature
+    except Exception as e:
+        logger.exception(f"시그니처 생성 중 오류 발생: {e}")
+        raise
 
 # 세션 생성 및 재시도 설정
 def create_session():
+    logger.debug("HTTP 세션 생성 시도")
     session = requests.Session()
     retries = Retry(
         total=5,
@@ -62,6 +73,7 @@ def create_session():
     adapter = HTTPAdapter(max_retries=retries)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
+    logger.debug("HTTP 세션 생성 완료")
     return session
 
 # Bybit V5 API 호출 함수
@@ -76,12 +88,17 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
     while attempt < max_retries:
         try:
             if method.upper() == 'GET':
+                logger.debug(f"GET 요청: {url} with params: {params}")
                 response = session.get(url, params=params, headers=headers, timeout=10)
             elif method.upper() == 'POST':
+                logger.debug(f"POST 요청: {url} with params: {params} and data: {data}")
                 response = session.post(url, params=params, json=data, headers=headers, timeout=10)
             else:
                 logger.error(f"지원되지 않는 HTTP 메서드: {method}")
                 return None
+
+            logger.debug(f"응답 상태 코드: {response.status_code}")
+            logger.debug(f"응답 내용: {response.text}")
 
             if response.status_code == 503:
                 logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
@@ -90,6 +107,7 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
                 continue
 
             response.raise_for_status()
+            logger.debug(f"API 호출 성공: {url}")
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
@@ -100,6 +118,7 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
 
 def get_position(symbol, category="linear"):
     """포지션 조회"""
+    logger.debug(f"get_position 호출 - symbol: {symbol}, category: {category}")
     endpoint = "/v5/position/list"
     params = {
         "api_key": API_KEY,
@@ -109,10 +128,13 @@ def get_position(symbol, category="linear"):
         "recv_window": 5000
     }
     params["sign"] = generate_signature(params, API_SECRET)
-    return call_bybit_api(endpoint, method='GET', params=params)
+    response = call_bybit_api(endpoint, method='GET', params=params)
+    logger.debug(f"get_position 응답: {response}")
+    return response
 
 def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
     """잔고 조회"""
+    logger.debug(f"get_wallet_balance 호출 - coin: {coin}, account_type: {account_type}")
     endpoint = "/v5/account/wallet-balance"
     params = {
         "api_key": API_KEY,
@@ -122,10 +144,13 @@ def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
         "recv_window": 5000
     }
     params["sign"] = generate_signature(params, API_SECRET)
-    return call_bybit_api(endpoint, method='GET', params=params)
+    response = call_bybit_api(endpoint, method='GET', params=params)
+    logger.debug(f"get_wallet_balance 응답: {response}")
+    return response
 
 def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, category="linear"):
     """주문 생성"""
+    logger.debug(f"place_order 호출 - symbol: {symbol}, side: {side}, order_type: {order_type}, qty: {qty}, leverage: {leverage}, reduce_only: {reduce_only}, category: {category}")
     endpoint = "/v5/order/create"
     params = {
         "api_key": API_KEY,
@@ -145,10 +170,13 @@ def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, ca
         leverage = 5
         params["leverage"] = leverage
     params["sign"] = generate_signature(params, API_SECRET)
-    return call_bybit_api(endpoint, method='POST', params=params, data=params)
+    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
+    logger.debug(f"place_order 응답: {response}")
+    return response
 
 def set_leverage(symbol, leverage=5, category="linear"):
     """레버리지 설정"""
+    logger.debug(f"set_leverage 호출 - symbol: {symbol}, leverage: {leverage}, category: {category}")
     endpoint = "/v5/account/set-leverage"
     params = {
         "api_key": API_KEY,
@@ -160,7 +188,9 @@ def set_leverage(symbol, leverage=5, category="linear"):
         "recv_window": 5000
     }
     params["sign"] = generate_signature(params, API_SECRET)
-    return call_bybit_api(endpoint, method='POST', params=params, data=params)
+    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
+    logger.debug(f"set_leverage 응답: {response}")
+    return response
 
 # MongoDB 연결 설정
 def init_db():
@@ -171,11 +201,15 @@ def init_db():
         logger.error("MongoDB password not found. Please set the MONGODB_PASSWORD environment variable.")
         raise ValueError("Missing MongoDB password.")
 
+    logger.debug("MongoDB 비밀번호 로드 완료")
+    
     # 비밀번호를 URL 인코딩
     encoded_password = quote_plus(db_password)
 
     # MongoDB 연결 URI 구성 (새 클러스터 주소와 데이터베이스 이름 반영)
     mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster0.7grdy.mongodb.net/bitcoin_trades_db?retryWrites=true&w=majority&appName=Cluster0&authSource=admin"
+
+    logger.debug(f"MongoDB URI: {mongo_uri}")
 
     try:
         # MongoClient 생성 시 ServerApi 사용 (uri 키워드 제거)
@@ -256,6 +290,7 @@ def adjust_position_size(performance, base_percentage=20):
     - 손실 시 포지션 크기 10% 감소
     - 이익 시 포지션 크기 10% 증가
     """
+    logger.debug(f"adjust_position_size 호출 - performance: {performance}, base_percentage: {base_percentage}")
     if performance < 0:
         # 손실이 발생했을 경우 포지션 크기 10% 감소
         adjusted_percentage = max(10, base_percentage - 10)
@@ -266,6 +301,7 @@ def adjust_position_size(performance, base_percentage=20):
         adjusted_percentage = min(30, base_percentage + 10)
         logger.info(f"퍼포먼스가 양수이므로 진입 비율을 {adjusted_percentage}%로 증가시킵니다.")
         return adjusted_percentage
+    logger.info(f"퍼포먼스 변화 없음. 진입 비율을 {base_percentage}%로 유지합니다.")
     return base_percentage
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
@@ -293,6 +329,7 @@ reason: Market indicators are favorable, entering a long position with moderate 
             "long": bool(trades_df['btc_balance'].iloc[-1] > 0) if not trades_df.empty else False,
             "short": bool(trades_df['btc_balance'].iloc[-1] < 0) if not trades_df.empty else False
         }
+        logger.debug(f"현재 포지션 상태: {current_position}")
 
         # AI 프롬프트 수정: 현재 포지션 상태를 고려하여 가능한 결정 제한
         if current_position["long"]:
@@ -383,6 +420,8 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
 
 이전 거래 퍼포먼스: {performance:.2f}%
 """
+
+        logger.debug(f"AI 요청 프롬프트:\n{prompt}")
 
         response = openai.ChatCompletion.create(
             model="gpt-4-turbo",  # 정확한 모델 이름으로 변경
@@ -518,6 +557,7 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
         "limit": limit
     }
     response = call_bybit_api(endpoint, method='GET', params=params)
+    logger.debug(f"get_ohlcv 응답: {response}")
     if response and response.get('retCode') == 0:
         try:
             records = response['result']['list']
@@ -540,6 +580,7 @@ def validate_decision(decision, current_position):
     """
     AI의 결정이 현재 포지션과 충돌하지 않는지 검증합니다.
     """
+    logger.debug(f"validate_decision 호출 - decision: {decision}, current_position: {current_position}")
     if decision == "open_long" and current_position["short"]:
         logger.warning("이미 숏 포지션에 있으므로 롱 포지션을 열 수 없습니다.")
         return False
@@ -549,6 +590,7 @@ def validate_decision(decision, current_position):
     if decision in ["close_long", "close_short"] and not (current_position["long"] or current_position["short"]):
         logger.warning("청산할 포지션이 없으므로 해당 결정을 실행할 수 없습니다.")
         return False
+    logger.debug("결정이 유효함")
     return True
 
 ### 메인 AI 트레이딩 로직
@@ -773,6 +815,7 @@ def ai_trading():
         # 이 부분은 실제 전략에 맞게 구현해야 합니다.
         # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 "hold"
         rsi = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 50)
+        logger.debug(f"일일 RSI: {rsi}")
         if not (30 < rsi < 70):
             logger.info(f"RSI가 {rsi}로, 신호가 애매하여 'hold'로 결정합니다.")
             decision = "hold"
@@ -782,6 +825,7 @@ def ai_trading():
             "long": bool(long_position and float(long_position['size']) > 0),
             "short": bool(short_position and float(short_position['size']) > 0)
         }
+        logger.debug(f"현재 포지션 상태 (검증 전): {current_position}")
 
         # AI 결정 검증 및 'hold'로 강제 변경
         if not validate_decision(decision, current_position):
@@ -794,6 +838,7 @@ def ai_trading():
         try:
             logger.info(f"{symbol} 현재 가격 데이터 조회 시도")
             response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": symbol, "category": "linear"})
+            logger.debug(f"{symbol} 현재 가격 조회 응답: {response}")
             if not response or response.get('retCode') != 0:
                 logger.error(f"{symbol} 현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
                 return
@@ -839,6 +884,7 @@ def ai_trading():
                 if position_size_after_fee > 10:  # 최소 거래 금액은 거래소에 따라 다를 수 있음
                     logger.info(f"{symbol} 롱 포지션 주문 시도: {percentage}%의 USDT와 {leverage}x 레버리지")
                     order_qty = round((position_size_after_fee * leverage) / current_price, 6)  # 레버리지 적용
+                    logger.debug(f"{symbol} 주문 수량 계산: {order_qty}")
                     try:
                         order = place_order(
                             symbol=symbol,
@@ -863,6 +909,7 @@ def ai_trading():
                 if long_position and float(long_position['size']) > 0:
                     logger.info(f"{symbol} 롱 포지션 청산 시도")
                     order_qty = float(long_position['size'])
+                    logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
                     try:
                         order = place_order(
                             symbol=symbol,
@@ -916,6 +963,7 @@ def ai_trading():
                 if position_size_after_fee > 10:
                     logger.info(f"{symbol} 숏 포지션 주문 시도: {percentage}%의 USDT와 {leverage}x 레버리지")
                     order_qty = round((position_size_after_fee * leverage) / current_price, 6)
+                    logger.debug(f"{symbol} 주문 수량 계산: {order_qty}")
                     try:
                         order = place_order(
                             symbol=symbol,
@@ -940,6 +988,7 @@ def ai_trading():
                 if short_position and float(short_position['size']) > 0:
                     logger.info(f"{symbol} 숏 포지션 청산 시도")
                     order_qty = float(short_position['size'])
+                    logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
                     try:
                         order = place_order(
                             symbol=symbol,
@@ -975,6 +1024,7 @@ def ai_trading():
             try:
                 # 포지션 재조회
                 response = get_position(symbol, category="linear")
+                logger.debug(f"{symbol} 포지션 재조회 응답: {response}")
                 if not response or response.get('retCode') != 0:
                     logger.error(f"{symbol} 포지션 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
@@ -984,6 +1034,7 @@ def ai_trading():
 
                 # 잔고 재조회
                 response = get_wallet_balance("USDT", account_type="CONTRACT")
+                logger.debug(f"{symbol} 잔고 재조회 응답: {response}")
                 if not response or response.get('retCode') != 0:
                     logger.error(f"{symbol} 잔고 재조회 오류: {response.get('retMsg') if response else 'No response'}")
                     return
@@ -1039,49 +1090,58 @@ def ai_trading():
     logger.info(f"{symbol} ai_trading 함수 종료")
 
 if __name__ == "__main__":
-    logger.info("메인 스크립트 시작")
-    # 중복 실행 방지를 위한 변수
-    trading_in_progress = False
+    try:
+        logger.info("메인 스크립트 시작")
+        # 환경 변수 확인
+        logger.debug(f"BYBIT_API_KEY: {API_KEY}")
+        logger.debug(f"BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
+        logger.debug(f"MONGODB_PASSWORD: {'***' if os.getenv('MONGODB_PASSWORD') else 'None'}")
+        logger.debug(f"OPENAI_API_KEY: {'***' if os.getenv('OPENAI_API_KEY') else 'None'}")
 
-    # 트레이딩 작업을 수행하는 함수
-    def job():
-        global trading_in_progress
-        if trading_in_progress:
-            logger.warning("Trading job is already in progress, skipping this run.")
-            return
-        try:
-            trading_in_progress = True
-            logger.info("트레이딩 작업 시작")
-            ai_trading()
-        except Exception as e:
-            logger.exception(f"트레이딩 작업 중 오류 발생: {e}")
-        finally:
-            trading_in_progress = False
-            logger.info("트레이딩 작업 종료")
+        # 중복 실행 방지를 위한 변수
+        trading_in_progress = False
 
-    # 초기 실행 후 매 5분마다 실행되도록 스케줄링 설정
-    def initial_and_recurring_schedule():
-        # 첫 번째 실행: 1분 후
-        schedule.every(1).minutes.do(first_run).tag('first_run')
+        # 트레이딩 작업을 수행하는 함수
+        def job():
+            global trading_in_progress
+            if trading_in_progress:
+                logger.warning("Trading job is already in progress, skipping this run.")
+                return
+            try:
+                trading_in_progress = True
+                logger.info("트레이딩 작업 시작")
+                ai_trading()
+            except Exception as e:
+                logger.exception(f"트레이딩 작업 중 오류 발생: {e}")
+            finally:
+                trading_in_progress = False
+                logger.info("트레이딩 작업 종료")
 
-    def first_run():
-        job()
-        # 이후 매 5분마다 실행되도록 설정
-        schedule.every(5).minutes.do(job)
-        # 첫 번째 실행 스케줄 제거
-        schedule.clear('first_run')
-        logger.info("초기 실행 완료. 이후부터는 매 5분마다 실행됩니다.")
+        # 초기 실행 후 매 5분마다 실행되도록 스케줄링 설정
+        def initial_and_recurring_schedule():
+            # 첫 번째 실행: 1분 후
+            schedule.every(1).minutes.do(first_run).tag('first_run')
 
-    # 스케줄링 초기화
-    initial_and_recurring_schedule()
+        def first_run():
+            job()
+            # 이후 매 5분마다 실행되도록 설정
+            schedule.every(5).minutes.do(job)
+            # 첫 번째 실행 스케줄 제거
+            schedule.clear('first_run')
+            logger.info("초기 실행 완료. 이후부터는 매 5분마다 실행됩니다.")
 
-    logger.info("스케줄러 설정 완료")
+        # 스케줄링 초기화
+        initial_and_recurring_schedule()
 
-    while True:
-        try:
-            schedule.run_pending()
-            time.sleep(1)
-        except Exception as e:
-            logger.exception(f"스케줄러 루프 중 오류 발생: {e}")
-            logger.info("잠시 대기 후 재시작합니다.")
-            time.sleep(5)  # 잠시 대기 후 재시작
+        logger.info("스케줄러 설정 완료")
+
+        while True:
+            try:
+                schedule.run_pending()
+                time.sleep(1)
+            except Exception as e:
+                logger.exception(f"스케줄러 루프 중 오류 발생: {e}")
+                logger.info("잠시 대기 후 재시작합니다.")
+                time.sleep(5)  # 잠시 대기 후 재시작
+    except Exception as e:
+        logger.exception(f"메인 스크립트 중 오류 발생: {e}")
