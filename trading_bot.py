@@ -148,26 +148,26 @@ def calculate_performance(trades_df):
         logger.exception(f"퍼포먼스 계산 실패: {e}")
         return 0
 
-# 퍼포먼스 기반 포지션 크기 조정 함수
-def adjust_position_size(performance, base_percentage=20):
-    """
-    퍼포먼스에 따라 포지션 크기 조정
-    - 손실 시 포지션 크기 10% 감소
-    - 이익 시 포지션 크기 10% 증가
-    """
-    logger.debug(f"adjust_position_size 호출 - performance: {performance}, base_percentage: {base_percentage}")
-    if performance < 0:
-        # 손실이 발생했을 경우 포지션 크기 10% 감소
-        adjusted_percentage = max(10, base_percentage - 10)
-        logger.info(f"퍼포먼스가 음수이므로 진입 비율을 {adjusted_percentage}%로 감소시킵니다.")
-        return adjusted_percentage
-    elif performance > 0:
-        # 이익이 발생했을 경우 포지션 크기 10% 증가
-        adjusted_percentage = min(30, base_percentage + 10)
-        logger.info(f"퍼포먼스가 양수이므로 진입 비율을 {adjusted_percentage}%로 증가시킵니다.")
-        return adjusted_percentage
-    logger.info(f"퍼포먼스 변화 없음. 진입 비율을 {base_percentage}%로 유지합니다.")
-    return base_percentage
+# 퍼포먼스 기반 포지션 크기 조정 함수 제거
+# def adjust_position_size(performance, base_percentage=20):
+#     """
+#     퍼포먼스에 따라 포지션 크기 조정
+#     - 손실 시 포지션 크기 10% 감소
+#     - 이익 시 포지션 크기 10% 증가
+#     """
+#     logger.debug(f"adjust_position_size 호출 - performance: {performance}, base_percentage: {base_percentage}")
+#     if performance < 0:
+#         # 손실이 발생했을 경우 포지션 크기 10% 감소
+#         adjusted_percentage = max(10, base_percentage - 10)
+#         logger.info(f"퍼포먼스가 음수이므로 진입 비율을 {adjusted_percentage}%로 감소시킵니다.")
+#         return adjusted_percentage
+#     elif performance > 0:
+#         # 이익이 발생했을 경우 포지션 크기 10% 증가
+#         adjusted_percentage = min(30, base_percentage + 10)
+#         logger.info(f"퍼포먼스가 양수이므로 진입 비율을 {adjusted_percentage}%로 증가시킵니다.")
+#         return adjusted_percentage
+#     logger.info(f"퍼포먼스 변화 없음. 진입 비율을 {base_percentage}%로 유지합니다.")
+#     return base_percentage
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(symbol, trades_df, current_market_data):
@@ -217,9 +217,9 @@ Possible decisions:
 - open_short: 숏 포지션 열기
 """
 
-    # 퍼포먼스 기반 포지션 크기 조정
-    adjusted_percentage = adjust_position_size(performance)
-    logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
+    # AI의 판단을 기반으로 포지션 크기 조정 함수 제거
+    # 퍼포먼스 기반 포지션 크기 조정 제거
+    # AI에게 포지션 크기를 직접 요청
 
     # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
     reduced_orderbook = {
@@ -236,11 +236,11 @@ Possible decisions:
 {possible_decisions}
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
-진입 비율은 {adjusted_percentage}%로 설정합니다.
+진입 비율은 AI의 판단에 따라 설정됩니다.
 
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
-시장 신호가 명확하지 않거나 롱/숏 모두에 대한 신호가 애매한 경우, 'hold' 결정을 내려주세요.
+시장이 불확실하거나 신호가 애매할 경우, 'hold' 결정을 내려주세요.
 
 다음 형식으로 응답하세요 (예시 참고):
 
@@ -331,7 +331,7 @@ def parse_ai_response(response_text):
             reason = parsed_json.get('reason')
             logger.debug(f"파싱된 JSON: {parsed_json}")
             # 모든 필드가 존재하는지 확인
-            if decision and percentage and leverage and reason:
+            if decision and percentage is not None and leverage is not None and reason:
                 return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
             else:
                 logger.warning("JSON 응답에 필요한 필드가 누락되었습니다.")
@@ -349,7 +349,7 @@ def parse_ai_response(response_text):
             parsed_data = {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
             logger.debug(f"파싱된 텍스트 데이터: {parsed_data}")
             # 모든 필드가 존재하는지 확인
-            if decision and percentage and leverage and reason:
+            if decision and percentage is not None and leverage is not None and reason:
                 return parsed_data
             else:
                 logger.warning("텍스트 응답에 필요한 필드가 누락되었습니다.")
@@ -365,29 +365,29 @@ def add_indicators(df, higher_timeframe_df):
     try:
         # 기존 지표들
         # 볼린저 밴드 추가
-        indicator_bb = ta.volatility.BollingerBands(close=df['Close'], window=20, window_dev=2)
+        indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
         df['bb_bbm'] = indicator_bb.bollinger_mavg()
         df['bb_bbh'] = indicator_bb.bollinger_hband()
         df['bb_bbl'] = indicator_bb.bollinger_lband()
 
         # RSI (Relative Strength Index) 추가
-        df['rsi'] = ta.momentum.RSIIndicator(close=df['Close'], window=14).rsi()
+        df['rsi'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
 
         # MACD (Moving Average Convergence Divergence) 추가
-        macd = ta.trend.MACD(close=df['Close'])
+        macd = ta.trend.MACD(close=df['close'])
         df['macd'] = macd.macd()
         df['macd_signal'] = macd.macd_signal()
         df['macd_diff'] = macd.macd_diff()
 
         # 이동평균선 (단기, 장기)
-        df['sma_20'] = ta.trend.SMAIndicator(close=df['Close'], window=20).sma_indicator()
-        df['ema_12'] = ta.trend.EMAIndicator(close=df['Close'], window=12).ema_indicator()
+        df['sma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
+        df['ema_12'] = ta.trend.EMAIndicator(close=df['close'], window=12).ema_indicator()
 
         # Stochastic Oscillator 추가
         stoch = ta.momentum.StochasticOscillator(
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
             window=14,
             smooth_window=3
         )
@@ -396,23 +396,23 @@ def add_indicators(df, higher_timeframe_df):
 
         # Average True Range (ATR) 추가
         df['atr'] = ta.volatility.AverageTrueRange(
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
             window=14
         ).average_true_range()
 
         # On-Balance Volume (OBV) 추가
         df['obv'] = ta.volume.OnBalanceVolumeIndicator(
-            close=df['Close'],
-            volume=df['Volume']
+            close=df['close'],
+            volume=df['volume']
         ).on_balance_volume()
 
         # 새로운 지표 추가
         # 1. Ichimoku Cloud (일목균형표)
         ichimoku = ta.trend.IchimokuIndicator(
-            high=df['High'],
-            low=df['Low'],
+            high=df['high'],
+            low=df['low'],
             window1=9,
             window2=26,
             window3=52
@@ -424,20 +424,20 @@ def add_indicators(df, higher_timeframe_df):
 
         # 2. VWAP (Volume Weighted Average Price)
         vwap = ta.volume.VolumeWeightedAveragePrice(
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            volume=df['Volume'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            volume=df['volume'],
             window=14
         )
         df['vwap'] = vwap.volume_weighted_average_price()
 
         # 3. Chaikin Money Flow (CMF)
         cmf = ta.volume.ChaikinMoneyFlowIndicator(
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            volume=df['Volume'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            volume=df['volume'],
             window=20
         )
         df['cmf'] = cmf.chaikin_money_flow()
@@ -448,8 +448,8 @@ def add_indicators(df, higher_timeframe_df):
         fib_ema_prefix = "fib_ema_"
         for period in fib_periods:
             ema_col = fib_ema_prefix + str(period)
-            # 고차원 데이터의 'High' 사용하여 피보나치 EMA 계산
-            df[ema_col] = ta.trend.EMAIndicator(close=higher_timeframe_df['High'], window=period).ema_indicator()
+            # 고차원 데이터의 'high' 사용하여 피보나치 EMA 계산
+            df[ema_col] = ta.trend.EMAIndicator(close=higher_timeframe_df['high'], window=period).ema_indicator()
 
         logger.info("보조 지표 추가 완료")
         return df
@@ -476,8 +476,7 @@ def ai_trading():
     # 1. 현재 포지션 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 현재 포지션 조회 시도")
-        # 수정: 'category' 파라미터 추가
-        response = session.get_orderbook(symbol=symbol, limit=10, category="linear")
+        response = session.get_positions(category="linear", settleCoin="USDT")
         logger.debug(f"{symbol} 포지션 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 포지션 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -526,16 +525,16 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 오더북 조회 시도")
-        # 수정: 'category' 파라미터 추가
         response = session.get_orderbook(symbol=symbol, limit=10, category="linear")
         logger.debug(f"{symbol} 오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
             orderbook = {}
         else:
+            # 'result'에 'b'와 'a' 키가 존재
             orderbook = {
-                'bids': response['result']['b'],
-                'asks': response['result']['a']
+                'bids': response['result'].get('b', []),
+                'asks': response['result'].get('a', [])
             }
             logger.debug(f"{symbol} 오더북 데이터: {orderbook}")
     except Exception as e:
@@ -619,7 +618,7 @@ def ai_trading():
             leverage_val = parsed_response.get('leverage')
             reason = parsed_response.get('reason')
 
-            if not decision or reason is None or percentage is None:
+            if not decision or reason is None or percentage is None or leverage_val is None:
                 logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
                 decision = "hold"
                 percentage = 0
@@ -633,8 +632,7 @@ def ai_trading():
         logger.info(f"{symbol} Decision Reason: {reason}")
 
         # 신호의 명확성 평가 (예시: 특정 지표의 기준 미달 시 "hold"로 변경)
-        # 이 부분은 실제 전략에 맞게 구현해야 합니다.
-        # 예를 들어, RSI가 과매수/과매도 범위에 있지 않을 경우 "hold"
+        # 실제 전략에 맞게 구현 필요
         rsi = current_market_data['daily_ohlcv'].get('rsi', {}).get('mean', 50)
         logger.debug(f"일일 RSI: {rsi}")
         if not (30 < rsi < 70):
@@ -680,7 +678,12 @@ def ai_trading():
                 logger.info(f"{symbol} 설정된 레버리지: {leverage_val}x")
                 try:
                     # 레버리지 설정
-                    response = set_leverage(symbol=symbol, leverage=leverage_val, category="linear")
+                    response = session.set_leverage(
+                        category='linear',
+                        symbol=symbol,
+                        buyLeverage=leverage_val,
+                        sellLeverage=leverage_val
+                    )
                     if not response or response.get('retCode') != 0:
                         logger.error(f"{symbol} 레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
@@ -705,14 +708,16 @@ def ai_trading():
                     order_qty = round((position_size_after_fee * leverage_val) / current_price, 6)  # 레버리지 적용
                     logger.debug(f"{symbol} 주문 수량 계산: {order_qty}")
                     try:
-                        order = place_order(
+                        order = session.place_order(
+                            category='linear',
                             symbol=symbol,
-                            side="Buy",
-                            order_type="Market",
+                            side='Buy',
+                            orderType='Market',
                             qty=order_qty,
-                            leverage=leverage_val,
-                            reduce_only=False,
-                            category="linear"
+                            takeProfit=round(current_price * (1 + tp), 2),
+                            stopLoss=round(current_price * (1 - sl), 2),
+                            tpTriggerBy='Market',
+                            slTriggerBy='Market'
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"{symbol} 롱 포지션 주문 성공: {order}")
@@ -730,14 +735,14 @@ def ai_trading():
                     order_qty = float(long_position['size'])
                     logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
                     try:
-                        order = place_order(
+                        order = session.place_order(
+                            category='linear',
                             symbol=symbol,
-                            side="Sell",
-                            order_type="Market",
+                            side='Sell',
+                            orderType='Market',
                             qty=order_qty,
                             leverage=1,  # 청산 시 레버리지 영향 없음
-                            reduce_only=True,
-                            category="linear"
+                            reduce_only=True
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"{symbol} 롱 포지션 청산 성공: {order}")
@@ -757,7 +762,12 @@ def ai_trading():
                 logger.info(f"{symbol} 설정된 레버리지: {leverage_val}x")
                 try:
                     # 레버리지 설정
-                    response = set_leverage(symbol=symbol, leverage=leverage_val, category="linear")
+                    response = session.set_leverage(
+                        category='linear',
+                        symbol=symbol,
+                        buyLeverage=leverage_val,
+                        sellLeverage=leverage_val
+                    )
                     if not response or response.get('retCode') != 0:
                         logger.error(f"{symbol} 레버리지 설정 오류: {response.get('retMsg') if response else 'No response'}")
                         return
@@ -782,14 +792,16 @@ def ai_trading():
                     order_qty = round((position_size_after_fee * leverage_val) / current_price, 6)
                     logger.debug(f"{symbol} 주문 수량 계산: {order_qty}")
                     try:
-                        order = place_order(
+                        order = session.place_order(
+                            category='linear',
                             symbol=symbol,
-                            side="Sell",
-                            order_type="Market",
+                            side='Sell',
+                            orderType='Market',
                             qty=order_qty,
-                            leverage=leverage_val,
-                            reduce_only=False,
-                            category="linear"
+                            takeProfit=round(current_price * (1 - tp), 2),
+                            stopLoss=round(current_price * (1 + sl), 2),
+                            tpTriggerBy='Market',
+                            slTriggerBy='Market'
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"{symbol} 숏 포지션 주문 성공: {order}")
@@ -807,14 +819,14 @@ def ai_trading():
                     order_qty = float(short_position['size'])
                     logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
                     try:
-                        order = place_order(
+                        order = session.place_order(
+                            category='linear',
                             symbol=symbol,
-                            side="Buy",
-                            order_type="Market",
+                            side='Buy',
+                            orderType='Market',
                             qty=order_qty,
                             leverage=1,  # 청산 시 레버리지 영향 없음
-                            reduce_only=True,
-                            category="linear"
+                            reduce_only=True
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"{symbol} 숏 포지션 청산 성공: {order}")
@@ -920,7 +932,9 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
         if response and response.get('retCode') == 0:
             try:
                 records = response['result']['list']
-                df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
+                df = pd.DataFrame(records)
+                # Bybit V5 API의 kline 응답 구조에 맞게 컬럼 이름 지정
+                df.columns = ["timestamp", "open", "high", "low", "close", "volume", "turnover"]
                 # 밀리초 단위를 datetime으로 변환
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
