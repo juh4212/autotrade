@@ -30,7 +30,7 @@ if not api_key or not api_secret:
     logger.error("API keys not found. Please check your .env file.")
     raise ValueError("Missing API keys. Please check your .env file.")
 
-# Bybit의 REST API 엔드포인트 설정 (테스트넷을 사용할 경우 'https://api-testnet.bybit.com')
+# Bybit의 REST API 엔드포인트 설정
 session = HTTP("https://api.bybit.com", api_key=api_key, api_secret=api_secret)
 
 # MongoDB 초기화 함수 - 거래 내역을 저장할 컬렉션을 설정
@@ -174,37 +174,6 @@ def get_fear_and_greed_index():
         logger.error(f"Error fetching Fear and Greed Index: {e}")
         return None
 
-# 뉴스 데이터 가져오기
-def get_bitcoin_news():
-    serpapi_key = os.getenv("SERPAPI_API_KEY")
-    if not serpapi_key:
-        logger.error("SERPAPI API key is missing.")
-        return []  # 빈 리스트 반환
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_news",
-        "q": "bitcoin OR btc",
-        "api_key": serpapi_key
-    }
-    
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        
-        news_results = data.get("news_results", [])
-        headlines = []
-        for item in news_results:
-            headlines.append({
-                "title": item.get("title", ""),
-                "date": item.get("date", "")
-            })
-        
-        return headlines[:5]
-    except requests.RequestException as e:
-        logger.error(f"Error fetching news: {e}")
-        return []
-
 ### 메인 AI 트레이딩 로직
 def ai_trading(trades_collection):
     global session
@@ -251,18 +220,14 @@ def ai_trading(trades_collection):
     # 4. 공포 탐욕 지수 가져오기
     fear_greed_index = get_fear_and_greed_index()
 
-    # 5. 뉴스 헤드라인 가져오기
-    news_headlines = get_bitcoin_news()
-
     ### AI에게 데이터 제공하고 판단 받기
     try:
         # 최근 거래 내역 가져오기
         recent_trades = get_recent_trades(trades_collection)
         
-        # 현재 시장 데이터 수집 (기존 코드에서 가져온 데이터 사용)
+        # 현재 시장 데이터 수집 (news_headlines 제거)
         current_market_data = {
             "fear_greed_index": fear_greed_index,
-            "news_headlines": news_headlines,
             "orderbook": orderbook,
             "daily_ohlcv": df_daily_recent.to_dict(orient='records'),
             "hourly_ohlcv": df_hourly_recent.to_dict(orient='records')
@@ -282,7 +247,7 @@ Example Response 1:
 {
   "decision": "buy",
   "percentage": 50,
-  "reason": "Based on the current market indicators and positive news, it's a good opportunity to invest."
+  "reason": "Based on the current market indicators and positive trends, it's a good opportunity to invest."
 }
 
 Example Response 2:
@@ -312,7 +277,6 @@ Example Response 3:
                     "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
 
 - Technical indicators and market data
-- Recent news headlines and their potential impact on Bitcoin price
 - The Fear and Greed Index and its implications
 - Overall market sentiment
 - Recent trading performance and reflection
@@ -336,7 +300,6 @@ Your percentage should reflect the strength of your conviction in the decision b
 Orderbook: {json.dumps(orderbook)}
 Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
 Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
-Recent news headlines: {json.dumps(news_headlines)}
 Fear and Greed Index: {json.dumps(fear_greed_index)}
 """
                 }
