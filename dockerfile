@@ -1,5 +1,5 @@
-# 베이스 이미지로 Python 3.13 사용
-FROM python:3.13-slim
+# 베이스 이미지로 Python 3.11 슬림 버전 사용
+FROM python:3.11-slim
 
 # 환경 변수 설정
 ENV PYTHONDONTWRITEBYTECODE=1
