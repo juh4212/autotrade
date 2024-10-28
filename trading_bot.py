@@ -2,29 +2,22 @@ import os
 import logging
 import time
 import json
-import re
-from datetime import datetime, timedelta
 import requests
-import pandas as pd
-import openai
-import ta
-from ta.utils import dropna
+import hmac
+import hashlib
+from urllib.parse import quote_plus
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from urllib.parse import quote_plus
-import hashlib
-import hmac
 from dotenv import load_dotenv
 import schedule
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from datetime import datetime, timedelta
 
-# 환경 변수 로드 (.env 파일 사용 시)
+# 환경 변수 로드
 load_dotenv()
 
-# 로깅 설정 - DEBUG 레벨로 설정하여 자세한 로그 기록
+# 로깅 설정
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG 레벨로 변경하여 모든 로그 기록
+    level=logging.DEBUG,  # DEBUG 레벨로 설정하여 모든 로그 기록
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # 콘솔에 로그 출력
@@ -36,42 +29,52 @@ logger = logging.getLogger(__name__)
 logger.info("트레이딩 봇 초기화 시작")
 
 # Bybit V5 API 엔드포인트
-BASE_URL = "https://api.bybit.com"
+BASE_URL = "https://api.bybit.com"  # 테스트넷 사용 시 "https://api-testnet.bybit.com"으로 변경
 
 # API 키 및 시크릿
 API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
 if not API_KEY or not API_SECRET:
-    logger.error("API keys not found. Please check your environment variables.")
+    logger.error("API 키 또는 시크릿이 설정되지 않았습니다. 환경 변수를 확인하세요.")
     raise ValueError("Missing API keys. Please check your environment variables.")
 
 logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
-def generate_signature(endpoint, params, secret):
-    """시그니처 생성"""
-    try:
-        ordered_params = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
-        signature_payload = endpoint + ordered_params
-        signature = hmac.new(secret.encode(), signature_payload.encode(), hashlib.sha256).hexdigest()
-        logger.debug(f"시그니처 생성: {signature} from payload: {signature_payload}")
-        return signature
-    except Exception as e:
-        logger.exception(f"시그니처 생성 중 오류 발생: {e}")
-        raise
+def generate_signature(timestamp, recv_window, method, endpoint, body, secret):
+    """
+    Bybit V5 API용 서명 생성 함수
 
-# 세션 생성 및 재시도 설정
+    :param timestamp: 현재 타임스탬프 (밀리초 단위)
+    :param recv_window: 요청의 유효 시간 (밀리초 단위, 기본값: 5000)
+    :param method: HTTP 메서드 ('GET', 'POST', 등)
+    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
+    :param body: 요청 본문 (딕셔너리 형태)
+    :param secret: API 시크릿 키
+    :return: 서명 문자열
+    """
+    body_str = json.dumps(body, separators=(',', ':')) if body else ''
+    pre_sign_string = f"{timestamp}{recv_window}{method.upper()}{endpoint}{body_str}"
+    signature = hmac.new(
+        secret.encode('utf-8'),
+        pre_sign_string.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    logger.debug(f"생성된 서명: {signature} from payload: {pre_sign_string}")
+    return signature
+
+# HTTP 세션 생성 및 재시도 설정
 def create_session():
     logger.debug("HTTP 세션 생성 시도")
     session = requests.Session()
-    retries = Retry(
+    retries = requests.adapters.Retry(
         total=5,
         backoff_factor=1,  # 지수 백오프 시작 지연 시간 (초)
         status_forcelist=[503, 504],
         allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
     )
-    adapter = HTTPAdapter(max_retries=retries)
+    adapter = requests.adapters.HTTPAdapter(max_retries=retries)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     logger.debug("HTTP 세션 생성 완료")
@@ -79,158 +82,176 @@ def create_session():
 
 # Bybit V5 API 호출 함수
 def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
-    """Bybit V5 API 호출 함수"""
+    """
+    Bybit V5 API 호출 함수
+
+    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
+    :param method: HTTP 메서드 ('GET', 'POST', 등)
+    :param params: 쿼리 파라미터 (딕셔너리 형태)
+    :param data: 요청 본문 데이터 (딕셔너리 형태)
+    :param max_retries: 최대 재시도 횟수
+    :return: 응답 JSON 데이터
+    """
     url = BASE_URL + endpoint
     session = create_session()
     attempt = 0
+
     while attempt < max_retries:
         try:
-            headers = {
-                "Content-Type": "application/json"
-            }
-
             if params is None:
                 params = {}
-
-            # 인증 헤더 설정
-            if "apiKey" in params:
-                auth_params = {
+            
+            recv_window = params.get("recvWindow", 5000)
+            timestamp = int(time.time() * 1000)
+            
+            if 'apiKey' in params:
+                method_upper = method.upper()
+                body = data if method_upper == 'POST' else {}
+                
+                # 서명 생성
+                signature = generate_signature(timestamp, recv_window, method_upper, endpoint, body, API_SECRET)
+                
+                # 헤더 설정
+                headers = {
+                    "Content-Type": "application/json",
                     "X-BAPI-API-KEY": API_KEY,
-                    "X-BAPI-TIMESTAMP": str(int(time.time() * 1000)),
-                    "X-BAPI-RECV-WINDOW": str(params.get("recvWindow", 5000))
+                    "X-BAPI-TIMESTAMP": str(timestamp),
+                    "X-BAPI-RECV-WINDOW": str(recv_window),
+                    "X-BAPI-SIGN": signature
                 }
-                signature = generate_signature(endpoint, params, API_SECRET)
-                auth_params["X-BAPI-SIGN"] = signature
-                headers.update(auth_params)
-                # Remove authentication params from query
+                
+                # 쿼리 파라미터에서 인증 관련 키 제거
                 params = {k: v for k, v in params.items() if k not in ["apiKey", "timestamp", "recvWindow", "sign"]}
-
-            if method.upper() == 'GET':
+            else:
+                # 인증이 필요 없는 요청의 헤더 설정
+                headers = {
+                    "Content-Type": "application/json"
+                }
+            
+            # 요청 보내기
+            if method_upper == 'GET':
                 logger.debug(f"GET 요청: {url} with params: {params}")
                 response = session.get(url, params=params, headers=headers, timeout=10)
-            elif method.upper() == 'POST':
+            elif method_upper == 'POST':
                 logger.debug(f"POST 요청: {url} with params: {params} and data: {data}")
                 response = session.post(url, params=params, json=data, headers=headers, timeout=10)
             else:
                 logger.error(f"지원되지 않는 HTTP 메서드: {method}")
                 return None
-
+            
+            # 응답 상태 코드 및 내용 로그
             logger.debug(f"응답 상태 코드: {response.status_code}")
             logger.debug(f"응답 내용: {response.text}")
-
+            
             if response.status_code == 503:
                 logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
                 attempt += 1
                 time.sleep(2 ** attempt)  # 지수 백오프
                 continue
-
+            
             response.raise_for_status()
             logger.debug(f"API 호출 성공: {url}")
             return response.json()
+        
         except requests.exceptions.RequestException as e:
             logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
             attempt += 1
             time.sleep(2 ** attempt)  # 지수 백오프
+
     logger.error(f"API 호출 실패: {url} - {method}")
     return None
 
+# 포지션 조회 함수
 def get_position(symbol, category="linear"):
     """포지션 조회"""
     logger.debug(f"get_position 호출 - symbol: {symbol}, category: {category}")
     endpoint = "/v5/position/list"
     params = {
-        "apiKey": API_KEY,
+        "apiKey": API_KEY,  # 인증 요청임을 표시
         "symbol": symbol,
-        "category": category,  # 필수 파라미터 추가
-        "timestamp": int(time.time() * 1000),
+        "category": category,  # 필수 파라미터
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_position 응답: {response}")
     return response
 
+# 잔고 조회 함수
 def get_wallet_balance(coin="USDT", account_type="CONTRACT"):
     """잔고 조회"""
     logger.debug(f"get_wallet_balance 호출 - coin: {coin}, account_type: {account_type}")
     endpoint = "/v5/account/wallet-balance"
     params = {
-        "apiKey": API_KEY,
+        "apiKey": API_KEY,  # 인증 요청임을 표시
         "coin": coin,
-        "accountType": account_type,  # 필수 파라미터 추가
-        "timestamp": int(time.time() * 1000),
+        "accountType": account_type,  # 필수 파라미터
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
     response = call_bybit_api(endpoint, method='GET', params=params)
     logger.debug(f"get_wallet_balance 응답: {response}")
     return response
 
+# 주문 생성 함수
 def place_order(symbol, side, order_type, qty, leverage=5, reduce_only=False, category="linear"):
     """주문 생성"""
     logger.debug(f"place_order 호출 - symbol: {symbol}, side: {side}, order_type: {order_type}, qty: {qty}, leverage: {leverage}, reduce_only: {reduce_only}, category: {category}")
     endpoint = "/v5/order/create"
     params = {
-        "apiKey": API_KEY,
+        "apiKey": API_KEY,  # 인증 요청임을 표시
         "symbol": symbol,
-        "side": side,  # Buy or Sell
+        "side": side,  # Buy 또는 Sell
         "orderType": order_type,  # Market
         "qty": qty,
         "timeInForce": "GoodTillCancel",
         "reduceOnly": reduce_only,
-        "category": category,  # 필수 파라미터 추가
-        "timestamp": int(time.time() * 1000),
+        "category": category,  # 필수 파라미터
         "recvWindow": 5000
     }
-    # 레버리지는 새로운 포지션을 열 때만 포함
     if not reduce_only:
         params["leverage"] = leverage
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
+    body = params.copy()
+    response = call_bybit_api(endpoint, method='POST', params=params, data=body)
     logger.debug(f"place_order 응답: {response}")
     return response
 
+# 레버리지 설정 함수
 def set_leverage(symbol, leverage=5, category="linear"):
     """레버리지 설정"""
     logger.debug(f"set_leverage 호출 - symbol: {symbol}, leverage: {leverage}, category: {category}")
     endpoint = "/v5/account/set-leverage"
     params = {
-        "apiKey": API_KEY,
+        "apiKey": API_KEY,  # 인증 요청임을 표시
         "symbol": symbol,
         "buyLeverage": leverage,
         "sellLeverage": leverage,
-        "category": category,  # 필수 파라미터 추가
-        "timestamp": int(time.time() * 1000),
+        "category": category,  # 필수 파라미터
         "recvWindow": 5000
     }
-    params["sign"] = generate_signature(endpoint, params, API_SECRET)
-    response = call_bybit_api(endpoint, method='POST', params=params, data=params)
+    body = params.copy()
+    response = call_bybit_api(endpoint, method='POST', params=params, data=body)
     logger.debug(f"set_leverage 응답: {response}")
     return response
 
 # MongoDB 연결 설정
 def init_db():
     logger.info("init_db 함수 시작")
-    # 환경 변수에서 MongoDB 비밀번호 가져오기
     db_password = os.getenv("MONGODB_PASSWORD")
     if not db_password:
-        logger.error("MongoDB password not found. Please set the MONGODB_PASSWORD environment variable.")
+        logger.error("MongoDB 비밀번호가 설정되지 않았습니다. 환경 변수를 확인하세요.")
         raise ValueError("Missing MongoDB password.")
-
+    
     logger.debug("MongoDB 비밀번호 로드 완료")
     
     # 비밀번호를 URL 인코딩
     encoded_password = quote_plus(db_password)
-
-    # MongoDB 연결 URI 구성 (새 클러스터 주소와 데이터베이스 이름 반영)
+    
+    # MongoDB 연결 URI 구성
     mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster0.7grdy.mongodb.net/bitcoin_trades_db?retryWrites=true&w=majority&appName=Cluster0&authSource=admin"
-
+    
     logger.debug(f"MongoDB URI: {mongo_uri}")
-
+    
     try:
-        # MongoClient 생성 시 ServerApi 사용 (uri 키워드 제거)
         client = MongoClient(mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
-        
         # 서버 정보 조회로 연결 확인
         client.admin.command('ping')
         db = client['bitcoin_trades_db']
@@ -281,7 +302,7 @@ def get_recent_trades(trades_collection, symbol, days=7, limit=50):
         logger.exception(f"{symbol}의 최근 거래 내역 조회 실패: {e}")
         return pd.DataFrame()
 
-# 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
+# 퍼포먼스 계산 함수
 def calculate_performance(trades_df):
     logger.info("calculate_performance 함수 시작")
     if trades_df.empty:
@@ -325,64 +346,65 @@ def generate_reflection(symbol, trades_df, current_market_data):
     logger.info(f"generate_reflection 함수 시작 - {symbol}")
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
-        logger.error("OpenAI API key가 누락되었거나 유효하지 않습니다.")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        logger.error("OpenAI API 키가 누락되었거나 유효하지 않습니다.")
         return None
 
-    # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
-    try:
-        # 프롬프트 최적화를 위해 예시 응답 간소화
-        examples = """
+    # OpenAI API 설정
+    openai.api_key = openai_api_key
+
+    # AI 프롬프트 최적화를 위해 예시 응답 간소화
+    examples = """
 decision: hold
 percentage: 20
 leverage: 5
 reason: Market indicators are favorable, entering a long position with moderate leverage.
-        """
+    """
 
-        # 현재 포지션 상태 확인
-        current_position = {
-            "long": bool(trades_df['btc_balance'].iloc[-1] > 0) if not trades_df.empty else False,
-            "short": bool(trades_df['btc_balance'].iloc[-1] < 0) if not trades_df.empty else False
-        }
-        logger.debug(f"현재 포지션 상태: {current_position}")
+    # 현재 포지션 상태 확인
+    current_position = {
+        "long": bool(trades_df['btc_balance'].iloc[-1] > 0) if not trades_df.empty else False,
+        "short": bool(trades_df['btc_balance'].iloc[-1] < 0) if not trades_df.empty else False
+    }
+    logger.debug(f"현재 포지션 상태: {current_position}")
 
-        # AI 프롬프트 수정: 현재 포지션 상태를 고려하여 가능한 결정 제한
-        if current_position["long"]:
-            possible_decisions = """
+    # AI 프롬프트 수정: 현재 포지션 상태를 고려하여 가능한 결정 제한
+    if current_position["long"]:
+        possible_decisions = """
 Possible decisions:
 - close_long: 롱 포지션 청산
 - hold: 관망하기
 """
-        elif current_position["short"]:
-            possible_decisions = """
+    elif current_position["short"]:
+        possible_decisions = """
 Possible decisions:
 - close_short: 숏 포지션 청산
 - hold: 관망하기
 """
-        else:
-            possible_decisions = """
+    else:
+        possible_decisions = """
 Possible decisions:
 - open_long: 롱 포지션 열기
 - open_short: 숏 포지션 열기
 """
 
-        # 퍼포먼스 기반 포지션 크기 조정
-        adjusted_percentage = adjust_position_size(performance)
-        logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
+    # 퍼포먼스 기반 포지션 크기 조정
+    adjusted_percentage = adjust_position_size(performance)
+    logger.info(f"조정된 진입 비율: {adjusted_percentage}%")
 
-        # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
-        reduced_orderbook = {
-            "bids": current_market_data['orderbook']['bids'][:10],
-            "asks": current_market_data['orderbook']['asks'][:10]
-        }
+    # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
+    reduced_orderbook = {
+        "bids": current_market_data['orderbook']['bids'][:10],
+        "asks": current_market_data['orderbook']['asks'][:10]
+    }
 
-        recent_daily_ohlcv = current_market_data['daily_ohlcv']
-        recent_hourly_ohlcv = current_market_data['hourly_ohlcv']
-        recent_four_hour_ohlcv = current_market_data['four_hour_ohlcv']
+    recent_daily_ohlcv = current_market_data['daily_ohlcv']
+    recent_hourly_ohlcv = current_market_data['hourly_ohlcv']
+    recent_four_hour_ohlcv = current_market_data['four_hour_ohlcv']
 
-        # AI 프롬프트 최적화: 필요한 정보만 포함
-        prompt = f"""
+    # AI 프롬프트 최적화: 필요한 정보만 포함
+    prompt = f"""
 {possible_decisions}
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
@@ -437,8 +459,10 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
 이전 거래 퍼포먼스: {performance:.2f}%
 """
 
-        logger.debug(f"AI 요청 프롬프트:\n{prompt}")
+    logger.debug(f"AI 요청 프롬프트:\n{prompt}")
 
+    try:
+        # OpenAI API 호출
         response = openai.ChatCompletion.create(
             model="gpt-4-turbo",  # 정확한 모델 이름으로 변경
             messages=[
@@ -451,7 +475,7 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
                     "content": prompt
                 }
             ],
-            max_tokens=2000,  # 최대 토큰 수를 2000으로 설정
+            max_tokens=2000,  # 최대 토큰 수 설정
             n=1,
             stop=None,
             temperature=0.2  # 응답의 창의성 조절
@@ -464,7 +488,50 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
         logger.exception(f"OpenAI API 호출 실패: {e}")
         return None
 
-# 데이터프레임에 보조 지표를 추가하는 함수
+# AI 응답 파싱 함수
+def parse_ai_response(response_text):
+    logger.info("parse_ai_response 함수 시작")
+    try:
+        # JSON 부분 추출 시도
+        json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            parsed_json = json.loads(json_str)
+            decision = parsed_json.get('decision')
+            percentage = parsed_json.get('percentage')
+            leverage = parsed_json.get('leverage')
+            reason = parsed_json.get('reason')
+            logger.debug(f"파싱된 JSON: {parsed_json}")
+            # 모든 필드가 존재하는지 확인
+            if decision and percentage and leverage and reason:
+                return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
+            else:
+                logger.warning("JSON 응답에 필요한 필드가 누락되었습니다.")
+        else:
+            # JSON 형식이 아닐 경우 텍스트에서 정보 추출
+            logger.warning("응답이 JSON 형식이 아님. 텍스트에서 정보 추출 시도")
+            decision_match = re.search(r'decision:\s*(\w+)', response_text, re.IGNORECASE)
+            percentage_match = re.search(r'percentage:\s*(\d+)', response_text, re.IGNORECASE)
+            leverage_match = re.search(r'leverage:\s*(\d+)', response_text, re.IGNORECASE)
+            reason_match = re.search(r'reason:\s*(.+)', response_text, re.IGNORECASE)
+            decision = decision_match.group(1).lower() if decision_match else None
+            percentage = int(percentage_match.group(1)) if percentage_match else None
+            leverage = int(leverage_match.group(1)) if leverage_match else None
+            reason = reason_match.group(1).strip() if reason_match else None
+            parsed_data = {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
+            logger.debug(f"파싱된 텍스트 데이터: {parsed_data}")
+            # 모든 필드가 존재하는지 확인
+            if decision and percentage and leverage and reason:
+                return parsed_data
+            else:
+                logger.warning("텍스트 응답에 필요한 필드가 누락되었습니다.")
+        # 필요한 필드가 모두 존재하지 않으면 None 반환
+        return None
+    except Exception as e:
+        logger.exception(f"AI 응답 파싱 실패: {e}")
+        return None
+
+# 보조 지표를 추가하는 함수
 def add_indicators(df, higher_timeframe_df):
     logger.info("add_indicators 함수 시작")
     try:
@@ -562,54 +629,7 @@ def add_indicators(df, higher_timeframe_df):
         logger.exception(f"보조 지표 추가 실패: {e}")
         return df
 
-# 가격 데이터 가져오기 함수 (Bybit V5 API 사용)
-def get_ohlcv(symbol, interval, limit, category="linear"):
-    logger.info(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
-    endpoint = "/v5/market/kline"
-    params = {
-        "category": category,  # 필수 파라미터 추가
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit
-    }
-    response = call_bybit_api(endpoint, method='GET', params=params)
-    logger.debug(f"get_ohlcv 응답: {response}")
-    if response and response.get('retCode') == 0:
-        try:
-            records = response['result']['list']
-            df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
-            # 밀리초 단위를 지정하여 datetime 변환
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            df = df.astype(float)
-            logger.info(f"OHLCV 데이터 조회 성공 - {symbol} - 총 {len(df)}건")
-            return df
-        except Exception as e:
-            logger.exception(f"OHLCV 데이터 처리 실패: {e}")
-            return None
-    else:
-        logger.error(f"OHLCV 데이터 조회 오류: {response.get('retMsg') if response else 'No response'}")
-        return None
-
-# AI 결정 실행 전 검증 함수
-def validate_decision(decision, current_position):
-    """
-    AI의 결정이 현재 포지션과 충돌하지 않는지 검증합니다.
-    """
-    logger.debug(f"validate_decision 호출 - decision: {decision}, current_position: {current_position}")
-    if decision == "open_long" and current_position["short"]:
-        logger.warning("이미 숏 포지션에 있으므로 롱 포지션을 열 수 없습니다.")
-        return False
-    if decision == "open_short" and current_position["long"]:
-        logger.warning("이미 롱 포지션에 있으므로 숏 포지션을 열 수 없습니다.")
-        return False
-    if decision in ["close_long", "close_short"] and not (current_position["long"] or current_position["short"]):
-        logger.warning("청산할 포지션이 없으므로 해당 결정을 실행할 수 없습니다.")
-        return False
-    logger.debug("결정이 유효함")
-    return True
-
-### 메인 AI 트레이딩 로직
+# AI 트레이딩 로직
 def ai_trading():
     logger.info("ai_trading 함수 시작")
     trades_collection = None
@@ -677,7 +697,13 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 오더북 조회 시도")
-        response = call_bybit_api("/v5/market/orderbook", method='GET', params={"symbol": symbol, "limit": 10, "category": "linear", "apiKey": API_KEY, "recvWindow": 5000})
+        response = call_bybit_api("/v5/market/orderbook", method='GET', params={
+            "symbol": symbol,
+            "limit": 10,
+            "category": "linear",
+            "apiKey": API_KEY,
+            "recvWindow": 5000
+        })
         logger.debug(f"{symbol} 오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -699,7 +725,6 @@ def ai_trading():
         if df_daily is None:
             logger.error(f"{symbol} 일일 OHLCV 데이터 조회 실패")
             return
-        df_daily = dropna(df_daily)
         df_daily = add_indicators(df_daily, df_daily)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 시간별 데이터")
@@ -707,7 +732,6 @@ def ai_trading():
         if df_hourly is None:
             logger.error(f"{symbol} 시간별 OHLCV 데이터 조회 실패")
             return
-        df_hourly = dropna(df_hourly)
         df_hourly = add_indicators(df_hourly, df_hourly)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         # 4시간 데이터 추가
@@ -716,7 +740,6 @@ def ai_trading():
         if df_4h is None:
             logger.error(f"{symbol} 4시간 OHLCV 데이터 조회 실패")
             return
-        df_4h = dropna(df_4h)
         df_4h = add_indicators(df_4h, df_4h)  # 피보나치 EMA를 위해 4H 데이터 사용
 
         # 최근 데이터만 사용하도록 설정 (메모리 절약)
@@ -759,48 +782,6 @@ def ai_trading():
         response_text = reflection
 
         # AI 응답 파싱
-        def parse_ai_response(response_text):
-            logger.info("parse_ai_response 함수 시작")
-            try:
-                # JSON 부분 추출 시도
-                json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    parsed_json = json.loads(json_str)
-                    decision = parsed_json.get('decision')
-                    percentage = parsed_json.get('percentage')
-                    leverage = parsed_json.get('leverage')
-                    reason = parsed_json.get('reason')
-                    logger.debug(f"파싱된 JSON: {parsed_json}")
-                    # 모든 필드가 존재하는지 확인
-                    if decision and percentage and leverage and reason:
-                        return {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
-                    else:
-                        logger.warning("JSON 응답에 필요한 필드가 누락되었습니다.")
-                else:
-                    # JSON 형식이 아닐 경우 텍스트에서 정보 추출
-                    logger.warning("응답이 JSON 형식이 아님. 텍스트에서 정보 추출 시도")
-                    decision_match = re.search(r'decision:\s*(\w+)', response_text, re.IGNORECASE)
-                    percentage_match = re.search(r'percentage:\s*(\d+)', response_text, re.IGNORECASE)
-                    leverage_match = re.search(r'leverage:\s*(\d+)', response_text, re.IGNORECASE)
-                    reason_match = re.search(r'reason:\s*(.+)', response_text, re.IGNORECASE)
-                    decision = decision_match.group(1).lower() if decision_match else None
-                    percentage = int(percentage_match.group(1)) if percentage_match else None
-                    leverage = int(leverage_match.group(1)) if leverage_match else None
-                    reason = reason_match.group(1).strip() if reason_match else None
-                    parsed_data = {'decision': decision, 'percentage': percentage, 'leverage': leverage, 'reason': reason}
-                    logger.debug(f"파싱된 텍스트 데이터: {parsed_data}")
-                    # 모든 필드가 존재하는지 확인
-                    if decision and percentage and leverage and reason:
-                        return parsed_data
-                    else:
-                        logger.warning("텍스트 응답에 필요한 필드가 누락되었습니다.")
-                # 필요한 필드가 모두 존재하지 않으면 None 반환
-                return None
-            except Exception as e:
-                logger.exception(f"AI 응답 파싱 실패: {e}")
-                return None
-
         parsed_response = parse_ai_response(response_text)
         if not parsed_response:
             logger.error(f"{symbol} AI 응답에 불완전한 데이터가 포함되어 있습니다. 기본적으로 'hold' 결정을 내립니다.")
@@ -853,7 +834,12 @@ def ai_trading():
         # 현재 가격 가져오기 (Bybit V5 API 사용)
         try:
             logger.info(f"{symbol} 현재 가격 데이터 조회 시도")
-            response = call_bybit_api("/v5/market/tickers", method='GET', params={"symbol": symbol, "category": "linear", "apiKey": API_KEY, "recvWindow": 5000})
+            response = call_bybit_api("/v5/market/tickers", method='GET', params={
+                "symbol": symbol,
+                "category": "linear",
+                "apiKey": API_KEY,
+                "recvWindow": 5000
+            })
             logger.debug(f"{symbol} 현재 가격 조회 응답: {response}")
             if not response or response.get('retCode') != 0:
                 logger.error(f"{symbol} 현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -1105,6 +1091,55 @@ def ai_trading():
 
     logger.info(f"{symbol} ai_trading 함수 종료")
 
+# 가격 데이터 가져오기 함수 (Bybit V5 API 사용)
+def get_ohlcv(symbol, interval, limit, category="linear"):
+    logger.info(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
+    endpoint = "/v5/market/kline"
+    params = {
+        "apiKey": API_KEY,  # 인증 요청임을 표시 (필요 시)
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit,
+        "category": category  # 필수 파라미터 추가
+    }
+    response = call_bybit_api(endpoint, method='GET', params=params)
+    logger.debug(f"get_ohlcv 응답: {response}")
+    if response and response.get('retCode') == 0:
+        try:
+            records = response['result']['list']
+            df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
+            # 밀리초 단위를 datetime으로 변환
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            df = df.astype(float)
+            logger.info(f"OHLCV 데이터 조회 성공 - {symbol} - 총 {len(df)}건")
+            return df
+        except Exception as e:
+            logger.exception(f"OHLCV 데이터 처리 실패: {e}")
+            return None
+    else:
+        logger.error(f"OHLCV 데이터 조회 오류: {response.get('retMsg') if response else 'No response'}")
+        return None
+
+# AI 결정 실행 전 검증 함수
+def validate_decision(decision, current_position):
+    """
+    AI의 결정이 현재 포지션과 충돌하지 않는지 검증합니다.
+    """
+    logger.debug(f"validate_decision 호출 - decision: {decision}, current_position: {current_position}")
+    if decision == "open_long" and current_position["short"]:
+        logger.warning("이미 숏 포지션에 있으므로 롱 포지션을 열 수 없습니다.")
+        return False
+    if decision == "open_short" and current_position["long"]:
+        logger.warning("이미 롱 포지션에 있으므로 숏 포지션을 열 수 없습니다.")
+        return False
+    if decision in ["close_long", "close_short"] and not (current_position["long"] or current_position["short"]):
+        logger.warning("청산할 포지션이 없으므로 해당 결정을 실행할 수 없습니다.")
+        return False
+    logger.debug("결정이 유효함")
+    return True
+
+# 메인 스크립트 실행
 if __name__ == "__main__":
     try:
         logger.info("메인 스크립트 시작")
