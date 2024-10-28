@@ -1,18 +1,48 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import plotly.express as px
+from pymongo import MongoClient
+from dotenv import load_dotenv
+import os
 
-# 데이터베이스 연결 함수
-def get_connection():
-    return sqlite3.connect('bitcoin_trades.db')
+# 환경 변수 로드
+load_dotenv()
+
+# MongoDB 연결 함수
+def get_mongo_connection():
+    mongo_uri = os.getenv("MONGODB_URI")
+    if not mongo_uri:
+        st.error("MongoDB URI가 설정되지 않았습니다. .env 파일을 확인하세요.")
+        st.stop()
+    client = MongoClient(mongo_uri)
+    return client
 
 # 데이터 로드 함수
 def load_data():
-    conn = get_connection()
-    query = "SELECT * FROM trades"
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+    client = get_mongo_connection()
+    db = client['bitcoin_trades_db']  # 데이터베이스 이름
+    trades_collection = db['trades']  # 컬렉션 이름
+
+    # 모든 트레이드 데이터를 가져오고, timestamp 기준으로 정렬
+    cursor = trades_collection.find().sort("timestamp", -1)
+    trades = list(cursor)
+
+    if not trades:
+        st.warning("데이터가 없습니다.")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(trades)
+
+    # 필요한 필드가 있는지 확인
+    expected_columns = ['timestamp', 'decision', 'percentage', 'reason', 'btc_balance', 
+                        'usdt_balance', 'btc_avg_buy_price', 'btc_usdt_price', 'reflection']
+    for col in expected_columns:
+        if col not in df.columns:
+            df[col] = None  # 없는 필드는 None으로 채움
+
+    # timestamp 형식 변환
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+
     return df
 
 # 메인 함수
@@ -22,8 +52,8 @@ def main():
     # 데이터 로드
     df = load_data()
 
-    # 날짜 형식 변환
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    if df.empty:
+        st.stop()
 
     # 기본 통계
     st.header('Basic Statistics')
@@ -69,8 +99,9 @@ def main():
 
     # 최근 반성 및 개선 내용 표시
     st.header('Recent Reflection')
-    if 'reflection' in df.columns:
-        st.write(df[['timestamp', 'reflection']].dropna().tail(1)['reflection'].values[0])
+    if 'reflection' in df.columns and not df['reflection'].isnull().all():
+        recent_reflection = df[['timestamp', 'reflection']].dropna().iloc[0]['reflection']
+        st.write(recent_reflection)
     else:
         st.write("No reflection data available.")
 
