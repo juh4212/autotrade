@@ -258,29 +258,29 @@ Asks:
 {', '.join([f"{ask[0]}@{ask[1]}" for ask in reduced_orderbook['asks']])}
 
 일일 OHLCV 요약:
-Open: {recent_daily_ohlcv.get('Open', {}).get('mean', 0)}
-High: {recent_daily_ohlcv.get('High', {}).get('mean', 0)}
-Low: {recent_daily_ohlcv.get('Low', {}).get('mean', 0)}
-Close: {recent_daily_ohlcv.get('Close', {}).get('mean', 0)}
-Volume: {recent_daily_ohlcv.get('Volume', {}).get('mean', 0)}
+Open: {recent_daily_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_daily_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_daily_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_daily_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_daily_ohlcv.get('volume', {}).get('mean', 0)}
 RSI: {recent_daily_ohlcv.get('rsi', {}).get('mean', 0)}
 MACD: {recent_daily_ohlcv.get('macd', {}).get('mean', 0)}
 
 시간별 OHLCV 요약:
-Open: {recent_hourly_ohlcv.get('Open', {}).get('mean', 0)}
-High: {recent_hourly_ohlcv.get('High', {}).get('mean', 0)}
-Low: {recent_hourly_ohlcv.get('Low', {}).get('mean', 0)}
-Close: {recent_hourly_ohlcv.get('Close', {}).get('mean', 0)}
-Volume: {recent_hourly_ohlcv.get('Volume', {}).get('mean', 0)}
+Open: {recent_hourly_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_hourly_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_hourly_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_hourly_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_hourly_ohlcv.get('volume', {}).get('mean', 0)}
 RSI: {recent_hourly_ohlcv.get('rsi', {}).get('mean', 0)}
 MACD: {recent_hourly_ohlcv.get('macd', {}).get('mean', 0)}
 
 4시간 OHLCV 요약:
-Open: {recent_four_hour_ohlcv.get('Open', {}).get('mean', 0)}
-High: {recent_four_hour_ohlcv.get('High', {}).get('mean', 0)}
-Low: {recent_four_hour_ohlcv.get('Low', {}).get('mean', 0)}
-Close: {recent_four_hour_ohlcv.get('Close', {}).get('mean', 0)}
-Volume: {recent_four_hour_ohlcv.get('Volume', {}).get('mean', 0)}
+Open: {recent_four_hour_ohlcv.get('open', {}).get('mean', 0)}
+High: {recent_four_hour_ohlcv.get('high', {}).get('mean', 0)}
+Low: {recent_four_hour_ohlcv.get('low', {}).get('mean', 0)}
+Close: {recent_four_hour_ohlcv.get('close', {}).get('mean', 0)}
+Volume: {recent_four_hour_ohlcv.get('volume', {}).get('mean', 0)}
 RSI: {recent_four_hour_ohlcv.get('rsi', {}).get('mean', 0)}
 MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
 
@@ -476,7 +476,8 @@ def ai_trading():
     # 1. 현재 포지션 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 현재 포지션 조회 시도")
-        response = session.get_positions(category="linear", settleCoin="USDT")
+        # 수정: 'category' 파라미터 추가
+        response = session.get_orderbook(symbol=symbol, limit=10, category="linear")
         logger.debug(f"{symbol} 포지션 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 포지션 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -525,7 +526,8 @@ def ai_trading():
     # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 오더북 조회 시도")
-        response = session.get_orderbook(symbol=symbol, limit=10)
+        # 수정: 'category' 파라미터 추가
+        response = session.get_orderbook(symbol=symbol, limit=10, category="linear")
         logger.debug(f"{symbol} 오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -543,23 +545,23 @@ def ai_trading():
     # 4. 차트 데이터 조회 및 보조지표 추가 (Bybit V5 API 사용)
     try:
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 일일 데이터")
-        df_daily = klines(symbol)
-        if df_daily.empty:
+        df_daily = get_ohlcv(symbol, interval="D", limit=60, category="linear")  # 데이터 양 축소
+        if df_daily is None:
             logger.error(f"{symbol} 일일 OHLCV 데이터 조회 실패")
             return
         df_daily = add_indicators(df_daily, df_daily)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 시간별 데이터")
-        df_hourly = klines(symbol)
-        if df_hourly.empty:
+        df_hourly = get_ohlcv(symbol, interval="60", limit=48, category="linear")  # 2일치 데이터로 축소
+        if df_hourly is None:
             logger.error(f"{symbol} 시간별 OHLCV 데이터 조회 실패")
             return
         df_hourly = add_indicators(df_hourly, df_hourly)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         # 4시간 데이터 추가
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 4시간 데이터")
-        df_4h = klines(symbol)
-        if df_4h.empty:
+        df_4h = get_ohlcv(symbol, interval="240", limit=50, category="linear")  # 데이터 양 축소
+        if df_4h is None:
             logger.error(f"{symbol} 4시간 OHLCV 데이터 조회 실패")
             return
         df_4h = add_indicators(df_4h, df_4h)  # 피보나치 EMA를 위해 4H 데이터 사용
@@ -909,7 +911,7 @@ def get_ohlcv(symbol, interval, limit, category="linear"):
     logger.info(f"get_ohlcv 함수 시작 - symbol: {symbol}, interval: {interval}, limit: {limit}")
     try:
         response = session.get_kline(
-            category='linear',
+            category=category,
             symbol=symbol,
             interval=interval,
             limit=limit
@@ -952,9 +954,6 @@ def validate_decision(decision, current_position):
         return False
     logger.debug("결정이 유효함")
     return True
-
-# 보조 지표를 추가하는 함수 (중복 제거)
-# 이미 `add_indicators` 함수가 정의되어 있으므로 제거
 
 # 메인 스크립트 실행
 if __name__ == "__main__":
