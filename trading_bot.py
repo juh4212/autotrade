@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from pybit.usdt_perpetual import HTTP  # pybit의 usdt_perpetual 모듈에서 HTTP 임포트
+from pybit import HTTP  # 올바른 임포트 경로
 import pandas as pd
 import json
 import openai
@@ -372,40 +372,48 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parsing error: {e}")
                 return None
-    
+
         parsed_response = parse_ai_response(response_text)
         if not parsed_response:
             logger.error("Failed to parse AI response.")
             return
-    
+
         decision = parsed_response.get('decision')
         percentage = parsed_response.get('percentage')
         reason = parsed_response.get('reason')
-    
+
         if not decision or reason is None:
             logger.error("Incomplete data in AI response.")
             return
-    
+
         logger.info(f"AI Decision: {decision.upper()}")
         logger.info(f"Percentage: {percentage}")
         logger.info(f"Decision Reason: {reason}")
-    
+
         order_executed = False
-    
+
         if decision.lower() == "buy":
             my_usdt = usdt_balance  # Bybit은 USDT 사용
             if my_usdt is None:
                 logger.error("Failed to retrieve USDT balance.")
                 return
-            buy_amount = my_usdt * (percentage / 100) * 0.9995  # 수수료 고려
-            if buy_amount > 5:  # Bybit 최소 주문 금액을 USDT 기준으로 설정 (예: 5 USDT)
+            buy_amount_usdt = my_usdt * (percentage / 100) * 0.9995  # 수수료 고려
+            if buy_amount_usdt > 5:  # Bybit 최소 주문 금액을 USDT 기준으로 설정 (예: 5 USDT)
                 logger.info(f"Buy Order Executed: {percentage}% of available USDT")
                 try:
+                    # 현재 BTC 가격을 가져와 USDT를 BTC로 변환
+                    current_price_info = bybit.latest_information_for_symbol(symbol="BTCUSDT")
+                    if not current_price_info or 'result' not in current_price_info:
+                        logger.error("Failed to retrieve current BTC price.")
+                        return
+                    current_price = float(current_price_info['result'][0]['last_price'])
+                    buy_qty = buy_amount_usdt / current_price  # USDT를 BTC 수량으로 변환
+
                     order = bybit.place_active_order(
                         symbol="BTCUSDT",
                         side="Buy",
                         order_type="Market",
-                        qty=buy_amount,  # Bybit API의 qty는 계약 단위 (BTC 수량으로 조정 필요)
+                        qty=round(buy_qty, 6),  # Bybit은 소수점 6자리까지 지원
                         time_in_force="GoodTillCancel"
                     )
                     if order and order.get('ret_code') == 0:
@@ -422,20 +430,21 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
             if my_btc is None:
                 logger.error("Failed to retrieve BTC balance.")
                 return
-            sell_amount = my_btc * (percentage / 100)
+            sell_amount_btc = my_btc * (percentage / 100)
+            # 현재 BTC 가격을 가져와 USDT 금액을 확인
             current_price_info = bybit.latest_information_for_symbol(symbol="BTCUSDT")
             if not current_price_info or 'result' not in current_price_info:
                 logger.error("Failed to retrieve current BTC price.")
                 return
             current_price = float(current_price_info['result'][0]['last_price'])
-            if sell_amount * current_price > 5:  # 최소 주문 금액
+            if sell_amount_btc * current_price > 5:  # 최소 주문 금액
                 logger.info(f"Sell Order Executed: {percentage}% of held BTC")
                 try:
                     order = bybit.place_active_order(
                         symbol="BTCUSDT",
                         side="Sell",
                         order_type="Market",
-                        qty=sell_amount,  # Bybit API의 qty는 계약 단위 (BTC 수량으로 조정 필요)
+                        qty=round(sell_amount_btc, 6),  # Bybit은 소수점 6자리까지 지원
                         time_in_force="GoodTillCancel"
                     )
                     if order and order.get('ret_code') == 0:
