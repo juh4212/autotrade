@@ -11,6 +11,10 @@ from pymongo.server_api import ServerApi
 from dotenv import load_dotenv
 import schedule
 from datetime import datetime, timedelta
+import pandas as pd
+import re
+import openai
+import ta  # Technical Analysis 라이브러리
 
 # 환경 변수 로드
 load_dotenv()
@@ -145,6 +149,12 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
             
             if response.status_code == 503:
                 logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
+                attempt += 1
+                time.sleep(2 ** attempt)  # 지수 백오프
+                continue
+            
+            if response.status_code == 429:
+                logger.warning(f"429 속도 제한 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
                 attempt += 1
                 time.sleep(2 ** attempt)  # 지수 백오프
                 continue
