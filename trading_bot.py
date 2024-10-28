@@ -46,7 +46,7 @@ logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
 logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
 
 # 시그니처 생성 함수
-def generate_signature(timestamp, recv_window, method, endpoint, body, secret):
+def generate_signature(timestamp, recv_window, method, endpoint, params, secret):
     """
     Bybit V5 API용 서명 생성 함수
 
@@ -54,19 +54,19 @@ def generate_signature(timestamp, recv_window, method, endpoint, body, secret):
     :param recv_window: 요청의 유효 시간 (밀리초 단위, 기본값: 5000)
     :param method: HTTP 메서드 ('GET', 'POST', 등)
     :param endpoint: API 엔드포인트 (예: '/v5/order/create')
-    :param body: 요청 본문 (딕셔너리 형태)
+    :param params: 쿼리 파라미터 (딕셔너리 형태)
     :param secret: API 시크릿 키
     :return: 서명 문자열
     """
-    # Body 파라미터 정렬 및 JSON 변환
-    body_str = json.dumps(body, separators=(',', ':')) if body else ''
-    pre_sign_string = f"{timestamp}{recv_window}{method.upper()}{endpoint}{body_str}"
+    # params 정렬 및 문자열로 변환
+    query_string = '&'.join(f"{k}={v}" for k, v in sorted(params.items()))
+    pre_sign_string = f"{timestamp}{recv_window}{method.upper()}{endpoint}?{query_string}"
+    
     signature = hmac.new(
         secret.encode('utf-8'),
         pre_sign_string.encode('utf-8'),
         hashlib.sha256
     ).hexdigest()
-    logger.debug(f"생성된 서명: {signature} from payload: {pre_sign_string}")
     return signature
 
 # Bybit V5 API 호출 함수
@@ -84,33 +84,42 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
     url = BASE_URL + endpoint
     session = create_session()
     attempt = 0
+    if params is None:
+        params = {}
+    
+    recv_window = params.get("recvWindow", 5000)
+    timestamp = int(time.time() * 1000)
+    
+    # 서명 생성
+    signature = generate_signature(timestamp, recv_window, method, endpoint, params, API_SECRET)
+
+    # 헤더 설정
+    headers = {
+        "Content-Type": "application/json",
+        "X-BAPI-API-KEY": API_KEY,
+        "X-BAPI-TIMESTAMP": str(timestamp),
+        "X-BAPI-RECV-WINDOW": str(recv_window),
+        "X-BAPI-SIGN": signature
+    }
 
     while attempt < max_retries:
         try:
-            if params is None:
-                params = {}
-            
-            recv_window = params.get("recvWindow", 5000)
-            timestamp = int(time.time() * 1000)
-            
-            # 인증 헤더 설정 및 서명 생성
-            if API_KEY and API_SECRET:
-                method_upper = method.upper()
-                body = data if method_upper == 'POST' else {}
-                
-                # 서명 생성
-                signature = generate_signature(timestamp, recv_window, method_upper, endpoint, body, API_SECRET)
-                
-                # 헤더 설정
-                headers = {
-                    "Content-Type": "application/json",
-                    "X-BAPI-API-KEY": API_KEY,
-                    "X-BAPI-TIMESTAMP": str(timestamp),
-                    "X-BAPI-RECV-WINDOW": str(recv_window),
-                    "X-BAPI-SIGN": signature
-                }
+            if method.upper() == 'GET':
+                response = session.get(url, params=params, headers=headers, timeout=10)
+            elif method.upper() == 'POST':
+                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
             else:
-                headers = {"Content-Type": "application/json"}
+                raise ValueError(f"지원되지 않는 HTTP 메서드: {method}")
+
+            response.raise_for_status()
+            return response.json()
+        
+        except requests.exceptions.RequestException as e:
+            logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
+            attempt += 1
+            time.sleep(2 ** attempt)  # 지수 백오프
+
+    return None
             
             # 요청 보내기
             if method_upper == 'GET':
