@@ -49,9 +49,20 @@ def generate_signature(timestamp, recv_window, method, endpoint, params, secret)
 
 # Bybit V5 API 호출 함수
 def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
+    """
+    Bybit V5 API 호출 함수
+
+    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
+    :param method: HTTP 메서드 ('GET', 'POST', 등)
+    :param params: 쿼리 파라미터 (딕셔너리 형태)
+    :param data: 요청 본문 데이터 (딕셔너리 형태)
+    :param max_retries: 최대 재시도 횟수
+    :return: 응답 JSON 데이터
+    """
     url = BASE_URL + endpoint
     session = requests.Session()
     attempt = 0
+    method = method.upper()  # 한 번만 대문자로 변환
 
     if params is None:
         params = {}
@@ -73,35 +84,15 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
 
     while attempt < max_retries:
         try:
-            response = session.request(
-                method=method.upper(),
-                url=url,
-                params=params if method.upper() == 'GET' else None,
-                json=data if method.upper() == 'POST' else None,
-                headers=headers,
-                timeout=10
-            )
-
-            response.raise_for_status()
-            return response.json()
-        
-        except requests.exceptions.RequestException as e:
-            logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
-            attempt += 1
-            time.sleep(2 ** attempt)  # 지수 백오프
-
-    logger.error(f"API 호출 실패: {url} - {method}")
-    return None
-
             # 요청 보내기
-            if method_upper == 'GET':
+            if method == 'GET':
                 response = session.get(url, params=params, headers=headers, timeout=10)
-            elif method_upper == 'POST':
+            elif method == 'POST':
                 response = session.post(url, params=params, json=data, headers=headers, timeout=10)
             else:
                 logger.error(f"지원되지 않는 HTTP 메서드: {method}")
                 return None
-            
+
             response.raise_for_status()
             return response.json()
         
@@ -112,6 +103,7 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
 
     logger.error(f"API 호출 실패: {url} - {method}")
     return None
+
 # HTTP 세션 생성 및 재시도 설정 함수
 def create_session():
     logger.debug("HTTP 세션 생성 시도")
