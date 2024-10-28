@@ -2,21 +2,18 @@ import os
 import logging
 import time
 import json
-import requests
-import hmac
-import hashlib
-from urllib.parse import quote_plus
-from pymongo.mongo_client import MongoClient
+import re
+from datetime import datetime, timedelta
+from time import sleep
+
+import pandas as pd
+import openai
+from pymongo import MongoClient
 from pymongo.server_api import ServerApi
 from dotenv import load_dotenv
-import schedule
-from datetime import datetime, timedelta
-import pandas as pd
-import re
-import openai
-import ta  # Technical Analysis 라이브러리
 from pybit.unified_trading import HTTP
-from time import sleep
+import ta  # Technical Analysis 라이브러리
+import schedule
 
 # 환경 변수 로드
 load_dotenv()
@@ -34,19 +31,20 @@ logger = logging.getLogger(__name__)
 
 logger.info("트레이딩 봇 초기화 시작")
 
-# Bybit API 설정
-API_KEY = os.getenv("BYBIT_API_KEY")
-API_SECRET = os.getenv("BYBIT_API_SECRET")
+# Bybit API 설정 (테스트넷 사용)
+API_KEY = os.getenv("BYBIT_TESTNET_API_KEY")
+API_SECRET = os.getenv("BYBIT_TESTNET_API_SECRET")
 
 if not API_KEY or not API_SECRET:
     logger.error("API 키 또는 시크릿이 설정되지 않았습니다. 환경 변수를 확인하세요.")
     raise ValueError("Missing API keys. Please check your environment variables.")
 
-logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
-logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
+logger.info("Bybit 테스트넷 API 키가 성공적으로 로드되었습니다.")
+logger.debug(f"BYBIT_TESTNET_API_KEY: {API_KEY}, BYBIT_TESTNET_API_SECRET: {'***' if API_SECRET else 'None'}")
 
-# PyBit 세션 설정
+# PyBit 세션 설정 (테스트넷 URL)
 session = HTTP(
+    endpoint="https://api-testnet.bybit.com",  # 테스트넷 엔드포인트
     api_key=API_KEY,
     api_secret=API_SECRET
 )
@@ -54,11 +52,10 @@ session = HTTP(
 # Configurations
 tp = 0.012  # Take Profit +1.2%
 sl = 0.009  # Stop Loss -0.9%
-timeframe = 15  # 15분 차트
-mode = 1  # 1 - Isolated, 0 - Cross
-leverage = 10
-qty = 50    # USDT 기준 주문 크기
-max_pos = 50  # Max current orders
+category = "linear"  # 계약 유형
+symbol = "BTCUSDT"  # 거래 심볼
+timeframe = "D"  # 일일 데이터 (테스트 시 더 짧은 기간 사용 가능)
+limit = 60  # 데이터 조회 한도
 
 # MongoDB 연결 설정
 def init_db():
@@ -67,17 +64,17 @@ def init_db():
     if not db_password:
         logger.error("MongoDB 비밀번호가 설정되지 않았습니다. 환경 변수를 확인하세요.")
         raise ValueError("Missing MongoDB password.")
-    
+
     logger.debug("MongoDB 비밀번호 로드 완료")
-    
+
     # 비밀번호를 URL 인코딩
-    encoded_password = quote_plus(db_password)
-    
-    # MongoDB 연결 URI 구성
+    encoded_password = re.escape(db_password)
+
+    # MongoDB 연결 URI 구성 (테스트용)
     mongo_uri = f"mongodb+srv://juh4212:{encoded_password}@cluster0.7grdy.mongodb.net/bitcoin_trades_db?retryWrites=true&w=majority&appName=Cluster0&authSource=admin"
-    
+
     logger.debug(f"MongoDB URI: {mongo_uri}")
-    
+
     try:
         client = MongoClient(mongo_uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
         # 서버 정보 조회로 연결 확인
@@ -95,7 +92,7 @@ def log_trade(trades_collection, symbol, decision, percentage, reason, btc_balan
               usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
     logger.info("log_trade 함수 시작")
     trade = {
-        "timestamp": datetime.now(),
+        "timestamp": datetime.utcnow(),
         "symbol": symbol,  # 심볼 추가
         "decision": decision,
         "percentage": percentage,
@@ -115,7 +112,7 @@ def log_trade(trades_collection, symbol, decision, percentage, reason, btc_balan
 # 최근 투자 기록 조회
 def get_recent_trades(trades_collection, symbol, days=7, limit=50):
     logger.info(f"get_recent_trades 함수 시작 - {symbol}의 최근 {days}일간의 거래 내역 조회")
-    seven_days_ago = datetime.now() - timedelta(days=days)
+    seven_days_ago = datetime.utcnow() - timedelta(days=days)
     try:
         cursor = trades_collection.find({"symbol": symbol, "timestamp": {"$gte": seven_days_ago}}).sort("timestamp", -1).limit(limit)
         trades = list(cursor)
@@ -147,27 +144,6 @@ def calculate_performance(trades_df):
     except Exception as e:
         logger.exception(f"퍼포먼스 계산 실패: {e}")
         return 0
-
-# 퍼포먼스 기반 포지션 크기 조정 함수 제거
-# def adjust_position_size(performance, base_percentage=20):
-#     """
-#     퍼포먼스에 따라 포지션 크기 조정
-#     - 손실 시 포지션 크기 10% 감소
-#     - 이익 시 포지션 크기 10% 증가
-#     """
-#     logger.debug(f"adjust_position_size 호출 - performance: {performance}, base_percentage: {base_percentage}")
-#     if performance < 0:
-#         # 손실이 발생했을 경우 포지션 크기 10% 감소
-#         adjusted_percentage = max(10, base_percentage - 10)
-#         logger.info(f"퍼포먼스가 음수이므로 진입 비율을 {adjusted_percentage}%로 감소시킵니다.")
-#         return adjusted_percentage
-#     elif performance > 0:
-#         # 이익이 발생했을 경우 포지션 크기 10% 증가
-#         adjusted_percentage = min(30, base_percentage + 10)
-#         logger.info(f"퍼포먼스가 양수이므로 진입 비율을 {adjusted_percentage}%로 증가시킵니다.")
-#         return adjusted_percentage
-#     logger.info(f"퍼포먼스 변화 없음. 진입 비율을 {base_percentage}%로 유지합니다.")
-#     return base_percentage
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(symbol, trades_df, current_market_data):
@@ -217,10 +193,6 @@ Possible decisions:
 - open_short: 숏 포지션 열기
 """
 
-    # AI의 판단을 기반으로 포지션 크기 조정 함수 제거
-    # 퍼포먼스 기반 포지션 크기 조정 제거
-    # AI에게 포지션 크기를 직접 요청
-
     # 데이터 축소: 오더북 상위 10개 호가, 최근 OHLCV 데이터의 주요 지표만 포함
     reduced_orderbook = {
         "bids": current_market_data['orderbook'].get('bids', [])[:10],
@@ -236,11 +208,10 @@ Possible decisions:
 {possible_decisions}
 
 레버리지는 5배로 고정하며, 새로운 포지션을 열 때만 포함합니다.
-진입 비율은 AI의 판단에 따라 설정됩니다.
 
 수수료는 0.055%로 계산하며, 레버리지를 곱해서 적용합니다.
 
-시장이 불확실하거나 신호가 애매할 경우, 'hold' 결정을 내려주세요.
+시장 신호가 명확하지 않거나 신호가 애매한 경우, 'hold' 결정을 내려주세요.
 
 다음 형식으로 응답하세요 (예시 참고):
 
@@ -303,7 +274,7 @@ MACD: {recent_four_hour_ohlcv.get('macd', {}).get('mean', 0)}
                     "content": prompt
                 }
             ],
-            max_tokens=2000,  # 최대 토큰 수 설정
+            max_tokens=500,  # 최대 토큰 수 설정
             n=1,
             stop=None,
             temperature=0.2  # 응답의 창의성 조절
@@ -469,14 +440,11 @@ def ai_trading():
         logger.exception(f"데이터베이스 연결 실패: {e}")
         return
 
-    symbol = "BTCUSDT"  # 비트코인 심볼로 고정
-
-    logger.info(f"{symbol}에 대한 트레이딩 시작")
-    ### 데이터 가져오기
-    # 1. 현재 포지션 조회 (Bybit V5 API 사용)
     try:
+        ### 데이터 가져오기
+        # 1. 현재 포지션 조회 (Bybit V5 API 사용)
         logger.info(f"{symbol} 현재 포지션 조회 시도")
-        response = session.get_positions(category="linear", settleCoin="USDT")
+        response = session.get_positions(category=category, settleCoin="USDT")
         logger.debug(f"{symbol} 포지션 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 포지션 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -486,12 +454,8 @@ def ai_trading():
         long_position = next((p for p in positions if p['side'] == 'Buy'), None)
         short_position = next((p for p in positions if p['side'] == 'Sell'), None)
         logger.debug(f"{symbol} 롱 포지션: {long_position}, 숏 포지션: {short_position}")
-    except Exception as e:
-        logger.exception(f"{symbol} 포지션 조회 실패: {e}")
-        return
 
-    # 2. 현재 잔고 조회 (Bybit V5 API 사용)
-    try:
+        # 2. 현재 잔고 조회 (Bybit V5 API 사용)
         logger.info(f"{symbol} 현재 잔고 조회 시도")
         response = session.get_wallet_balance(accountType="CONTRACT", coin="USDT")
         logger.debug(f"{symbol} 잔고 조회 응답: {response}")
@@ -518,14 +482,10 @@ def ai_trading():
         else:
             logger.error(f"{symbol} USDT 잔고 정보를 찾을 수 없습니다.")
             return
-    except Exception as e:
-        logger.exception(f"{symbol} 잔고 조회 실패: {e}")
-        return
 
-    # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
-    try:
+        # 3. 오더북(호가 데이터) 조회 (Bybit V5 API 사용)
         logger.info(f"{symbol} 오더북 조회 시도")
-        response = session.get_orderbook(symbol=symbol, limit=10, category="linear")
+        response = session.get_orderbook(symbol=symbol, limit=10, category=category)
         logger.debug(f"{symbol} 오더북 조회 응답: {response}")
         if not response or response.get('retCode') != 0:
             logger.error(f"{symbol} 오더북 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -537,21 +497,17 @@ def ai_trading():
                 'asks': response['result'].get('a', [])
             }
             logger.debug(f"{symbol} 오더북 데이터: {orderbook}")
-    except Exception as e:
-        logger.exception(f"{symbol} 오더북 조회 실패: {e}")
-        orderbook = {}
 
-    # 4. 차트 데이터 조회 및 보조지표 추가 (Bybit V5 API 사용)
-    try:
+        # 4. 차트 데이터 조회 및 보조지표 추가 (Bybit V5 API 사용)
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 일일 데이터")
-        df_daily = get_ohlcv(symbol, interval="D", limit=60, category="linear")  # 데이터 양 축소
+        df_daily = get_ohlcv(symbol, interval="D", limit=60, category=category)  # 데이터 양 축소
         if df_daily is None:
             logger.error(f"{symbol} 일일 OHLCV 데이터 조회 실패")
             return
         df_daily = add_indicators(df_daily, df_daily)  # 4H 데이터가 필요하다면 별도 처리 필요
 
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 시간별 데이터")
-        df_hourly = get_ohlcv(symbol, interval="60", limit=48, category="linear")  # 2일치 데이터로 축소
+        df_hourly = get_ohlcv(symbol, interval="60", limit=48, category=category)  # 2일치 데이터로 축소
         if df_hourly is None:
             logger.error(f"{symbol} 시간별 OHLCV 데이터 조회 실패")
             return
@@ -559,7 +515,7 @@ def ai_trading():
 
         # 4시간 데이터 추가
         logger.info(f"{symbol} 차트 데이터 조회 시도 - 4시간 데이터")
-        df_4h = get_ohlcv(symbol, interval="240", limit=50, category="linear")  # 데이터 양 축소
+        df_4h = get_ohlcv(symbol, interval="240", limit=50, category=category)  # 데이터 양 축소
         if df_4h is None:
             logger.error(f"{symbol} 4시간 OHLCV 데이터 조회 실패")
             return
@@ -570,13 +526,8 @@ def ai_trading():
         df_hourly_recent = df_hourly.tail(48)
         df_4h_recent = df_4h.tail(50)  # 피보나치 EMA를 계산하기 위해 데이터 양 축소
         logger.info(f"{symbol} 최근 일일 데이터: {df_daily_recent.shape[0]}건, 최근 시간별 데이터: {df_hourly_recent.shape[0]}건, 4시간 데이터: {df_4h_recent.shape[0]}건")
-    except Exception as e:
-        logger.exception(f"{symbol} 차트 데이터 조회 또는 보조지표 추가 실패: {e}")
-        return
 
-    ### AI에게 데이터 제공하고 판단 받기
-    try:
-        # 최근 거래 내역 가져오기
+        ### AI에게 데이터 제공하고 판단 받기
         logger.info(f"{symbol} 최근 거래 내역 조회 시도")
         recent_trades = get_recent_trades(trades_collection, symbol)
 
@@ -656,7 +607,7 @@ def ai_trading():
         # 현재 가격 가져오기 (Bybit V5 API 사용)
         try:
             logger.info(f"{symbol} 현재 가격 데이터 조회 시도")
-            response = session.get_tickers(symbol=symbol, category="linear")
+            response = session.get_tickers(symbol=symbol, category=category)
             logger.debug(f"{symbol} 현재 가격 조회 응답: {response}")
             if not response or response.get('retCode') != 0:
                 logger.error(f"{symbol} 현재 가격 조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -670,16 +621,11 @@ def ai_trading():
         # 주문 실행 (Bybit V5 API 사용)
         try:
             if decision == "open_long":
-                # 레버리지 확인
-                if leverage_val is None:
-                    logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
-                    return
-                # 레버리지를 설정
+                # 레버리지 설정
                 logger.info(f"{symbol} 설정된 레버리지: {leverage_val}x")
                 try:
-                    # 레버리지 설정
                     response = session.set_leverage(
-                        category='linear',
+                        category=category,
                         symbol=symbol,
                         buyLeverage=leverage_val,
                         sellLeverage=leverage_val
@@ -709,15 +655,15 @@ def ai_trading():
                     logger.debug(f"{symbol} 주문 수량 계산: {order_qty}")
                     try:
                         order = session.place_order(
-                            category='linear',
+                            category=category,
                             symbol=symbol,
                             side='Buy',
                             orderType='Market',
                             qty=order_qty,
                             takeProfit=round(current_price * (1 + tp), 2),
                             stopLoss=round(current_price * (1 - sl), 2),
-                            tpTriggerBy='Market',
-                            slTriggerBy='Market'
+                            tpTriggerBy='MarkPrice',
+                            slTriggerBy='MarkPrice'
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"{symbol} 롱 포지션 주문 성공: {order}")
@@ -736,12 +682,11 @@ def ai_trading():
                     logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
                     try:
                         order = session.place_order(
-                            category='linear',
+                            category=category,
                             symbol=symbol,
                             side='Sell',
                             orderType='Market',
                             qty=order_qty,
-                            leverage=1,  # 청산 시 레버리지 영향 없음
                             reduce_only=True
                         )
                         if order and order.get('retCode') == 0:
@@ -754,16 +699,11 @@ def ai_trading():
                 else:
                     logger.info(f"{symbol} 청산할 롱 포지션이 없습니다.")
             elif decision == "open_short":
-                # 레버리지 확인
-                if leverage_val is None:
-                    logger.error(f"{symbol} 레버리지가 필요합니다. 포지션을 여는 데 실패했습니다.")
-                    return
-                # 레버리지를 설정
+                # 레버리지 설정
                 logger.info(f"{symbol} 설정된 레버리지: {leverage_val}x")
                 try:
-                    # 레버리지 설정
                     response = session.set_leverage(
-                        category='linear',
+                        category=category,
                         symbol=symbol,
                         buyLeverage=leverage_val,
                         sellLeverage=leverage_val
@@ -793,15 +733,15 @@ def ai_trading():
                     logger.debug(f"{symbol} 주문 수량 계산: {order_qty}")
                     try:
                         order = session.place_order(
-                            category='linear',
+                            category=category,
                             symbol=symbol,
                             side='Sell',
                             orderType='Market',
                             qty=order_qty,
                             takeProfit=round(current_price * (1 - tp), 2),
                             stopLoss=round(current_price * (1 + sl), 2),
-                            tpTriggerBy='Market',
-                            slTriggerBy='Market'
+                            tpTriggerBy='MarkPrice',
+                            slTriggerBy='MarkPrice'
                         )
                         if order and order.get('retCode') == 0:
                             logger.info(f"{symbol} 숏 포지션 주문 성공: {order}")
@@ -820,12 +760,11 @@ def ai_trading():
                     logger.debug(f"{symbol} 청산 주문 수량: {order_qty}")
                     try:
                         order = session.place_order(
-                            category='linear',
+                            category=category,
                             symbol=symbol,
                             side='Buy',
                             orderType='Market',
                             qty=order_qty,
-                            leverage=1,  # 청산 시 레버리지 영향 없음
                             reduce_only=True
                         )
                         if order and order.get('retCode') == 0:
@@ -852,7 +791,7 @@ def ai_trading():
             sleep(2)  # API 호출 제한을 고려하여 잠시 대기
             try:
                 # 포지션 재조회
-                response = session.get_positions(category="linear", settleCoin="USDT")
+                response = session.get_positions(category=category, settleCoin="USDT")
                 logger.debug(f"{symbol} 포지션 재조회 응답: {response}")
                 if not response or response.get('retCode') != 0:
                     logger.error(f"{symbol} 포지션 재조회 오류: {response.get('retMsg') if response else 'No response'}")
@@ -909,12 +848,8 @@ def ai_trading():
             except Exception as e:
                 logger.exception(f"{symbol} 거래 후 잔고 및 포지션 조회 실패: {e}")
         except Exception as e:
-            logger.exception(f"{symbol} 주문 실행 중 오류 발생: {e}")
+            logger.exception(f"{symbol} AI 트레이딩 로직 중 오류 발생: {e}")
             return
-
-    except Exception as e:
-        logger.exception(f"{symbol} AI 트레이딩 로직 중 오류 발생: {e}")
-        return
 
     logger.info(f"{symbol} ai_trading 함수 종료")
 
@@ -974,8 +909,8 @@ if __name__ == "__main__":
     try:
         logger.info("메인 스크립트 시작")
         # 환경 변수 확인
-        logger.debug(f"BYBIT_API_KEY: {API_KEY}")
-        logger.debug(f"BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
+        logger.debug(f"BYBIT_TESTNET_API_KEY: {API_KEY}")
+        logger.debug(f"BYBIT_TESTNET_API_SECRET: {'***' if API_SECRET else 'None'}")
         logger.debug(f"MONGODB_PASSWORD: {'***' if os.getenv('MONGODB_PASSWORD') else 'None'}")
         logger.debug(f"OPENAI_API_KEY: {'***' if os.getenv('OPENAI_API_KEY') else 'None'}")
 
