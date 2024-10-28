@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from pybit import HTTP
 import pandas as pd
 import json
-from openai import OpenAI
+import openai
 import ta
 from ta.utils import dropna
 import time
@@ -43,6 +43,8 @@ def init_db():
         client = MongoClient(mongo_uri)
         db = client['bitcoin_trades_db']  # 데이터베이스 이름
         trades_collection = db['trades']  # 컬렉션 이름
+        # 인덱스 생성 (timestamp)
+        trades_collection.create_index("timestamp")
         return trades_collection
     except PyMongoError as e:
         logger.error(f"Failed to connect to MongoDB: {e}")
@@ -81,22 +83,23 @@ def calculate_performance(trades_df):
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
         logger.error("OpenAI API key is missing or invalid.")
         return None
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {
-                "role": "user",
-                "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
-            },
-            {
-                "role": "user",
-                "content": f"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 Recent trading data:
 {trades_df.to_json(orient='records')}
 
@@ -113,15 +116,13 @@ Please analyze this data and provide:
 
 Limit your response to 250 words or less.
 """
-            }
-        ]
-    )
-
-    try:
+                }
+            ]
+        )
         response_content = response['choices'][0]['message']['content']
         return response_content
-    except (IndexError, KeyError) as e:
-        logger.error(f"Error extracting response content: {e}")
+    except Exception as e:
+        logger.error(f"Error generating reflection: {e}")
         return None
 
 # 데이터프레임에 보조 지표를 추가하는 함수
@@ -254,10 +255,6 @@ def ai_trading(trades_collection):
     news_headlines = get_bitcoin_news()
 
     ### AI에게 데이터 제공하고 판단 받기
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
-        logger.error("OpenAI API key is missing or invalid.")
-        return None
     try:
         # 최근 거래 내역 가져오기
         recent_trades = get_recent_trades(trades_collection)
@@ -303,9 +300,13 @@ Example Response 3:
 }
 """
         
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert in Bitcoin investing."
+                },
                 {
                     "role": "user",
                     "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
@@ -399,7 +400,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                         qty=buy_amount,
                         time_in_force="GoodTillCancel"
                     )
-                    if order and 'result' in order:
+                    if order and 'result' in order and order['result']:
                         logger.info(f"Buy order executed successfully: {order}")
                         order_executed = True
                     else:
@@ -426,7 +427,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                             qty=sell_amount,
                             time_in_force="GoodTillCancel"
                         )
-                        if order and 'result' in order:
+                        if order and 'result' in order and order['result']:
                             order_executed = True
                             logger.info(f"Sell order executed successfully: {order}")
                         else:
@@ -472,8 +473,8 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
             "reflection": reflection
         }
         log_trade(trades_collection, trade_data)
-    except PyMongoError as e:
-        logger.error(f"Database operation error: {e}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during trading: {e}")
         return
 
 if __name__ == "__main__":
