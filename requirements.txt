@@ -1,5 +1,5 @@
 python-dotenv==1.0.0
-pybit==1.0.8
+pybit==5.8.0
 pandas==1.5.3
 openai==0.27.8
 ta==0.10.1
