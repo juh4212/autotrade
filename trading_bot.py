@@ -119,8 +119,9 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
             attempt += 1
             time.sleep(2 ** attempt)  # 지수 백오프
 
+    logger.error(f"API 호출 실패: {url} - {method}")
     return None
-            
+
             # 요청 보내기
             if method_upper == 'GET':
                 response = session.get(url, params=params, headers=headers, timeout=10)
