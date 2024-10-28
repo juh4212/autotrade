@@ -1,5 +1,5 @@
 # 베이스 이미지 선택 (최신 Python 버전 사용)
-FROM python:3.9-slim
+FROM python:3.13-slim
 
 # 작업 디렉토리 설정
 WORKDIR /app
