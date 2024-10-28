@@ -21,44 +21,22 @@ load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG 레벨로 설정하여 모든 로그 기록
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),  # 콘솔에 로그 출력
-        logging.FileHandler("trading_bot.log")  # 로그를 파일에도 기록
+        logging.StreamHandler(),
+        logging.FileHandler("trading_bot.log")
     ]
 )
 logger = logging.getLogger(__name__)
 
-logger.info("트레이딩 봇 초기화 시작")
-
-# Bybit V5 API 엔드포인트
-BASE_URL = "https://api.bybit.com"  # 테스트넷 사용 시 "https://api-testnet.bybit.com"으로 변경
-
-# API 키 및 시크릿
+# Bybit API 설정
+BASE_URL = "https://api.bybit.com"
 API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
-if not API_KEY or not API_SECRET:
-    logger.error("API 키 또는 시크릿이 설정되지 않았습니다. 환경 변수를 확인하세요.")
-    raise ValueError("Missing API keys. Please check your environment variables.")
 
-logger.info("Bybit API 키가 성공적으로 로드되었습니다.")
-logger.debug(f"BYBIT_API_KEY: {API_KEY}, BYBIT_API_SECRET: {'***' if API_SECRET else 'None'}")
-
-# 시그니처 생성 함수
+# 서명 생성 함수
 def generate_signature(timestamp, recv_window, method, endpoint, params, secret):
-    """
-    Bybit V5 API용 서명 생성 함수
-
-    :param timestamp: 현재 타임스탬프 (밀리초 단위)
-    :param recv_window: 요청의 유효 시간 (밀리초 단위, 기본값: 5000)
-    :param method: HTTP 메서드 ('GET', 'POST', 등)
-    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
-    :param params: 쿼리 파라미터 (딕셔너리 형태)
-    :param secret: API 시크릿 키
-    :return: 서명 문자열
-    """
-    # params 정렬 및 문자열로 변환
     query_string = '&'.join(f"{k}={v}" for k, v in sorted(params.items()))
     pre_sign_string = f"{timestamp}{recv_window}{method.upper()}{endpoint}?{query_string}"
     
@@ -71,19 +49,10 @@ def generate_signature(timestamp, recv_window, method, endpoint, params, secret)
 
 # Bybit V5 API 호출 함수
 def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
-    """
-    Bybit V5 API 호출 함수
-
-    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
-    :param method: HTTP 메서드 ('GET', 'POST', 등)
-    :param params: 쿼리 파라미터 (딕셔너리 형태)
-    :param data: 요청 본문 데이터 (딕셔너리 형태)
-    :param max_retries: 최대 재시도 횟수
-    :return: 응답 JSON 데이터
-    """
     url = BASE_URL + endpoint
-    session = create_session()
+    session = requests.Session()
     attempt = 0
+
     if params is None:
         params = {}
     
@@ -104,12 +73,14 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
 
     while attempt < max_retries:
         try:
-            if method.upper() == 'GET':
-                response = session.get(url, params=params, headers=headers, timeout=10)
-            elif method.upper() == 'POST':
-                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
-            else:
-                raise ValueError(f"지원되지 않는 HTTP 메서드: {method}")
+            response = session.request(
+                method=method.upper(),
+                url=url,
+                params=params if method.upper() == 'GET' else None,
+                json=data if method.upper() == 'POST' else None,
+                headers=headers,
+                timeout=10
+            )
 
             response.raise_for_status()
             return response.json()
