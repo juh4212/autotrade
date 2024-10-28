@@ -58,6 +58,7 @@ def generate_signature(timestamp, recv_window, method, endpoint, body, secret):
     :param secret: API 시크릿 키
     :return: 서명 문자열
     """
+    # Body 파라미터 정렬 및 JSON 변환
     body_str = json.dumps(body, separators=(',', ':')) if body else ''
     pre_sign_string = f"{timestamp}{recv_window}{method.upper()}{endpoint}{body_str}"
     signature = hmac.new(
@@ -68,6 +69,68 @@ def generate_signature(timestamp, recv_window, method, endpoint, body, secret):
     logger.debug(f"생성된 서명: {signature} from payload: {pre_sign_string}")
     return signature
 
+# Bybit V5 API 호출 함수
+def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
+    """
+    Bybit V5 API 호출 함수
+
+    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
+    :param method: HTTP 메서드 ('GET', 'POST', 등)
+    :param params: 쿼리 파라미터 (딕셔너리 형태)
+    :param data: 요청 본문 데이터 (딕셔너리 형태)
+    :param max_retries: 최대 재시도 횟수
+    :return: 응답 JSON 데이터
+    """
+    url = BASE_URL + endpoint
+    session = create_session()
+    attempt = 0
+
+    while attempt < max_retries:
+        try:
+            if params is None:
+                params = {}
+            
+            recv_window = params.get("recvWindow", 5000)
+            timestamp = int(time.time() * 1000)
+            
+            # 인증 헤더 설정 및 서명 생성
+            if API_KEY and API_SECRET:
+                method_upper = method.upper()
+                body = data if method_upper == 'POST' else {}
+                
+                # 서명 생성
+                signature = generate_signature(timestamp, recv_window, method_upper, endpoint, body, API_SECRET)
+                
+                # 헤더 설정
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-BAPI-API-KEY": API_KEY,
+                    "X-BAPI-TIMESTAMP": str(timestamp),
+                    "X-BAPI-RECV-WINDOW": str(recv_window),
+                    "X-BAPI-SIGN": signature
+                }
+            else:
+                headers = {"Content-Type": "application/json"}
+            
+            # 요청 보내기
+            if method_upper == 'GET':
+                response = session.get(url, params=params, headers=headers, timeout=10)
+            elif method_upper == 'POST':
+                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
+            else:
+                logger.error(f"지원되지 않는 HTTP 메서드: {method}")
+                return None
+            
+            response.raise_for_status()
+            return response.json()
+        
+        except requests.exceptions.RequestException as e:
+            logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
+            attempt += 1
+            time.sleep(2 ** attempt)  # 지수 백오프
+
+    logger.error(f"API 호출 실패: {url} - {method}")
+    return None
 # HTTP 세션 생성 및 재시도 설정
 def create_session():
     logger.debug("HTTP 세션 생성 시도")
