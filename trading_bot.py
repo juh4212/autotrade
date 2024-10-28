@@ -141,7 +141,7 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
 
     logger.error(f"API 호출 실패: {url} - {method}")
     return None
-# HTTP 세션 생성 및 재시도 설정
+# HTTP 세션 생성 및 재시도 설정 함수
 def create_session():
     logger.debug("HTTP 세션 생성 시도")
     session = requests.Session()
@@ -159,16 +159,6 @@ def create_session():
 
 # Bybit V5 API 호출 함수
 def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5):
-    """
-    Bybit V5 API 호출 함수
-
-    :param endpoint: API 엔드포인트 (예: '/v5/order/create')
-    :param method: HTTP 메서드 ('GET', 'POST', 등)
-    :param params: 쿼리 파라미터 (딕셔너리 형태)
-    :param data: 요청 본문 데이터 (딕셔너리 형태)
-    :param max_retries: 최대 재시도 횟수
-    :return: 응답 JSON 데이터
-    """
     url = BASE_URL + endpoint
     session = create_session()
     attempt = 0
@@ -181,61 +171,29 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
             recv_window = params.get("recvWindow", 5000)
             timestamp = int(time.time() * 1000)
             
-            if 'apiKey' in params:
-                method_upper = method.upper()
-                body = data if method_upper == 'POST' else {}
-                
-                # 서명 생성
-                signature = generate_signature(timestamp, recv_window, method_upper, endpoint, body, API_SECRET)
-                
-                # 헤더 설정
-                headers = {
-                    "Content-Type": "application/json",
-                    "X-BAPI-API-KEY": API_KEY,
-                    "X-BAPI-TIMESTAMP": str(timestamp),
-                    "X-BAPI-RECV-WINDOW": str(recv_window),
-                    "X-BAPI-SIGN": signature
-                }
-                
-                # 쿼리 파라미터에서 인증 관련 키 제거
-                params = {k: v for k, v in params.items() if k not in ["apiKey", "timestamp", "recvWindow", "sign"]}
-            else:
-                # 인증이 필요 없는 요청의 헤더 설정
-                headers = {
-                    "Content-Type": "application/json"
-                }
-            
+            # 서명 생성
+            signature = generate_signature(timestamp, recv_window, method.upper(), endpoint, params, API_SECRET)
+
+            # 헤더 설정
+            headers = {
+                "Content-Type": "application/json",
+                "X-BAPI-API-KEY": API_KEY,
+                "X-BAPI-TIMESTAMP": str(timestamp),
+                "X-BAPI-RECV-WINDOW": str(recv_window),
+                "X-BAPI-SIGN": signature
+            }
+
             # 요청 보내기
-            if method_upper == 'GET':
-                logger.debug(f"GET 요청: {url} with params: {params}")
-                response = session.get(url, params=params, headers=headers, timeout=10)
-            elif method_upper == 'POST':
-                logger.debug(f"POST 요청: {url} with params: {params} and data: {data}")
-                response = session.post(url, params=params, json=data, headers=headers, timeout=10)
-            else:
-                logger.error(f"지원되지 않는 HTTP 메서드: {method}")
-                return None
-            
+            response = session.request(method, url, params=params if method == 'GET' else None,
+                                       json=data if method == 'POST' else None, headers=headers, timeout=10)
+
             # 응답 상태 코드 및 내용 로그
             logger.debug(f"응답 상태 코드: {response.status_code}")
             logger.debug(f"응답 내용: {response.text}")
             
-            if response.status_code == 503:
-                logger.warning(f"503 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
-                attempt += 1
-                time.sleep(2 ** attempt)  # 지수 백오프
-                continue
-            
-            if response.status_code == 429:
-                logger.warning(f"429 속도 제한 오류 발생: {response.text}. 재시도 시도 {attempt + 1}/{max_retries}")
-                attempt += 1
-                time.sleep(2 ** attempt)  # 지수 백오프
-                continue
-            
-            response.raise_for_status()
-            logger.debug(f"API 호출 성공: {url}")
+            response.raise_for_status()  # 상태 코드가 오류일 경우 예외 발생
             return response.json()
-        
+
         except requests.exceptions.RequestException as e:
             logger.exception(f"API 호출 중 예외 발생: {e}. 재시도 시도 {attempt + 1}/{max_retries}")
             attempt += 1
@@ -243,7 +201,6 @@ def call_bybit_api(endpoint, method='GET', params=None, data=None, max_retries=5
 
     logger.error(f"API 호출 실패: {url} - {method}")
     return None
-
 # 포지션 조회 함수
 def get_position(symbol, category="linear"):
     """포지션 조회"""
