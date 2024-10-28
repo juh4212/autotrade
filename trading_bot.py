@@ -771,7 +771,7 @@ def ai_trading():
                     # 수수료 계산: 0.055% * 레버리지
                     fee = position_size * 0.00055 * leverage_val
                     position_size_after_fee = position_size - fee
-                    logger.info(f"{symbol} 포지션 크기 (수수료 포함 후): {position_size_after_fee} USDT, 수수료: {fee} USDT")
+                    logger.info(f"{symbol} 포지션 크기 (수수료 포함 후): {position_size_after_fee} USDT, 수수료: {fee} USDT}")
 
                     if position_size_after_fee > 10:
                         logger.info(f"{symbol} 숏 포지션 주문 시도: {percentage}%의 USDT와 {leverage_val}x 레버리지")
@@ -982,8 +982,6 @@ def job():
 
 # 초기 실행 후 매 5분마다 실행되도록 스케줄링 설정
 def initial_and_recurring_schedule():
-    # 첫 번째 실행: 바로 실행
-    job()
     # 이후 매 5분마다 실행되도록 설정
     schedule.every(5).minutes.do(job)
     logger.info("스케줄러 설정 완료: 매 5분마다 ai_trading 함수가 실행됩니다.")
