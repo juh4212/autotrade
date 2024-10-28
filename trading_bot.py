@@ -1,9 +1,9 @@
 import os
 from dotenv import load_dotenv
-from pybit import HTTP  # Changed from pyupbit to pybit
+from pybit.usdt_perpetual import HTTP  # pybit의 usdt_perpetual 모듈에서 HTTP 임포트
 import pandas as pd
 import json
-from openai import OpenAI
+import openai
 import ta
 from ta.utils import dropna
 import time
@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 import re
 import schedule
 import numpy as np
-from pymongo import MongoClient  # Added for MongoDB
+from pymongo import MongoClient
 
 # .env 파일에 저장된 환경 변수를 불러오기 (API 키 등)
 load_dotenv()
@@ -44,19 +44,17 @@ bybit = HTTP(
     api_secret=bybit_api_secret
 )
 
-# SQLite 데이터베이스 초기화 함수 제거 (MongoDB 사용으로 대체)
-
 # 거래 기록을 DB에 저장하는 함수 (MongoDB 사용)
-def log_trade(decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
+def log_trade(decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
     trade_record = {
         "timestamp": datetime.utcnow().isoformat(),
         "decision": decision,
         "percentage": percentage,
         "reason": reason,
         "btc_balance": btc_balance,
-        "krw_balance": krw_balance,
+        "usdt_balance": usdt_balance,
         "btc_avg_buy_price": btc_avg_buy_price,
-        "btc_krw_price": btc_krw_price,
+        "btc_usdt_price": btc_usdt_price,
         "reflection": reflection
     }
     try:
@@ -67,9 +65,9 @@ def log_trade(decision, percentage, reason, btc_balance, krw_balance, btc_avg_bu
 
 # 최근 투자 기록 조회 (MongoDB 사용)
 def get_recent_trades(days=7):
-    seven_days_ago = datetime.utcnow() - timedelta(days=days)
+    seven_days_ago = (datetime.utcnow() - timedelta(days=days)).isoformat()
     try:
-        cursor = trades_collection.find({"timestamp": {"$gt": seven_days_ago.isoformat()}}).sort("timestamp", -1)
+        cursor = trades_collection.find({"timestamp": {"$gt": seven_days_ago}}).sort("timestamp", -1)
         trades = list(cursor)
         if not trades:
             return pd.DataFrame()
@@ -83,12 +81,12 @@ def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
     try:
-        # 초기 잔고 계산 (KRW + BTC * 현재 가격)
+        # 초기 잔고 계산 (USDT + BTC * 현재 가격)
         initial_trade = trades_df.iloc[-1]
-        initial_balance = initial_trade['krw_balance'] + initial_trade['btc_balance'] * initial_trade['btc_krw_price']
+        initial_balance = initial_trade['usdt_balance'] + initial_trade['btc_balance'] * initial_trade['btc_usdt_price']
         # 최종 잔고 계산
         final_trade = trades_df.iloc[0]
-        final_balance = final_trade['krw_balance'] + final_trade['btc_balance'] * final_trade['btc_krw_price']
+        final_balance = final_trade['usdt_balance'] + final_trade['btc_balance'] * final_trade['btc_usdt_price']
         return (final_balance - initial_balance) / initial_balance * 100
     except Exception as e:
         logger.error(f"Error calculating performance: {e}")
@@ -98,22 +96,25 @@ def calculate_performance(trades_df):
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
         logger.error("OpenAI API key is missing or invalid.")
         return None
 
+    openai.api_key = openai_api_key
+
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
-    response = client.chat.completions.create(
-        model="gpt-4",  # 모델 이름 수정 (적절한 모델 사용)
-        messages=[
-            {
-                "role": "system",
-                "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
-            },
-            {
-                "role": "user",
-                "content": f"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",  # 모델 이름
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 Recent trading data:
 {trades_df.to_json(orient='records')}
 
@@ -130,15 +131,13 @@ Please analyze this data and provide:
 
 Limit your response to 250 words or less.
 """
-            }
-        ]
-    )
-
-    try:
+                }
+            ]
+        )
         response_content = response['choices'][0]['message']['content']
         return response_content
-    except (IndexError, KeyError) as e:
-        logger.error(f"Error extracting response content: {e}")
+    except Exception as e:
+        logger.error(f"Error generating reflection with OpenAI: {e}")
         return None
 
 # --------------------보조지표--------------------
@@ -200,7 +199,7 @@ def ai_trading():
             return
         
         balances = balance_info['result']
-        krw_balance = 0  # Bybit은 KRW가 아닌 USDT를 사용
+        usdt_balance = 0  # Bybit은 USDT를 사용
         btc_balance = 0
         btc_avg_buy_price = 0
         for balance in balances:
@@ -208,13 +207,13 @@ def ai_trading():
                 btc_balance = float(balance['wallet_balance'])
                 btc_avg_buy_price = float(balance.get('avgPrice', 0))  # avgPrice 필드는 일부 API에서 제공
             elif balance['coin'] == 'USDT':
-                krw_balance = float(balance['wallet_balance'])
+                usdt_balance = float(balance['wallet_balance'])
         
         # 2. 오더북(호가 데이터) 조회
         orderbook = bybit.order_book(symbol="BTCUSDT")  # Bybit 심볼 형식 변경
         
         # 3. 차트 데이터 조회 및 보조지표 추가
-        # Bybit의 차트 데이터는 REST API 또는 WebSocket을 통해 가져올 수 있습니다.
+        # Bybit의 차트 데이터는 REST API를 통해 가져올 수 있습니다.
         # 여기서는 REST API 사용 예시를 제공합니다.
         def get_ohlcv(symbol, interval, limit):
             try:
@@ -263,10 +262,11 @@ def ai_trading():
         return
     
     ### AI에게 데이터 제공하고 판단 받기
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
         logger.error("OpenAI API key is missing or invalid.")
         return None
+
     try:
         # 최근 거래 내역 가져오기
         recent_trades = get_recent_trades()
@@ -276,8 +276,8 @@ def ai_trading():
             "fear_greed_index": fear_greed_index,
             "news_headlines": news_headlines,
             "orderbook": orderbook,
-            "daily_ohlcv": df_daily_recent.to_dict(),
-            "hourly_ohlcv": df_hourly_recent.to_dict()
+            "daily_ohlcv": df_daily_recent.to_dict(orient='records'),
+            "hourly_ohlcv": df_hourly_recent.to_dict(orient='records')
         }
         
         # 반성 및 개선 내용 생성
@@ -312,7 +312,7 @@ Example Response 3:
 }
 """
         
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4",  # 모델 이름 수정
             messages=[
                 {
@@ -340,10 +340,10 @@ Your percentage should reflect the strength of your conviction in the decision b
                 },
                 {
                     "role": "user",
-                    "content": f"""Current investment status: {json.dumps({'BTC': btc_balance, 'USDT': krw_balance})}
+                    "content": f"""Current investment status: {json.dumps({'BTC': btc_balance, 'USDT': usdt_balance})}
 Orderbook: {json.dumps(orderbook)}
-Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json()}
-Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json()}
+Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
+Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
 Recent news headlines: {json.dumps(news_headlines)}
 Fear and Greed Index: {json.dumps(fear_greed_index)}
 """
@@ -393,7 +393,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
         order_executed = False
     
         if decision.lower() == "buy":
-            my_usdt = krw_balance  # Bybit uses USDT
+            my_usdt = usdt_balance  # Bybit은 USDT 사용
             if my_usdt is None:
                 logger.error("Failed to retrieve USDT balance.")
                 return
@@ -405,7 +405,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                         symbol="BTCUSDT",
                         side="Buy",
                         order_type="Market",
-                        qty=buy_amount,  # Quantity in BTC or USDT based on Bybit API
+                        qty=buy_amount,  # Bybit API의 qty는 계약 단위 (BTC 수량으로 조정 필요)
                         time_in_force="GoodTillCancel"
                     )
                     if order and order.get('ret_code') == 0:
@@ -423,11 +423,11 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                 logger.error("Failed to retrieve BTC balance.")
                 return
             sell_amount = my_btc * (percentage / 100)
-            current_price = bybit.latest_information_for_symbol(symbol="BTCUSDT")
-            if not current_price or 'result' not in current_price:
+            current_price_info = bybit.latest_information_for_symbol(symbol="BTCUSDT")
+            if not current_price_info or 'result' not in current_price_info:
                 logger.error("Failed to retrieve current BTC price.")
                 return
-            current_price = float(current_price['result'][0]['last_price'])
+            current_price = float(current_price_info['result'][0]['last_price'])
             if sell_amount * current_price > 5:  # 최소 주문 금액
                 logger.info(f"Sell Order Executed: {percentage}% of held BTC")
                 try:
@@ -435,7 +435,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                         symbol="BTCUSDT",
                         side="Sell",
                         order_type="Market",
-                        qty=sell_amount,
+                        qty=sell_amount,  # Bybit API의 qty는 계약 단위 (BTC 수량으로 조정 필요)
                         time_in_force="GoodTillCancel"
                     )
                     if order and order.get('ret_code') == 0:
@@ -461,15 +461,19 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
             if balance_info and 'result' in balance_info:
                 balances = balance_info['result']
                 btc_balance = 0
-                krw_balance = 0
+                usdt_balance = 0
                 btc_avg_buy_price = 0
                 for balance in balances:
                     if balance['coin'] == 'BTC':
                         btc_balance = float(balance['wallet_balance'])
                         btc_avg_buy_price = float(balance.get('avgPrice', 0))
                     elif balance['coin'] == 'USDT':
-                        krw_balance = float(balance['wallet_balance'])
-            current_btc_price = float(bybit.latest_information_for_symbol(symbol="BTCUSDT")['result'][0]['last_price'])
+                        usdt_balance = float(balance['wallet_balance'])
+            current_btc_price_info = bybit.latest_information_for_symbol(symbol="BTCUSDT")
+            if current_btc_price_info and 'result' in current_btc_price_info:
+                current_btc_price = float(current_btc_price_info['result'][0]['last_price'])
+            else:
+                current_btc_price = 0
         except Exception as e:
             logger.error(f"Error fetching updated balances: {e}")
             return
@@ -480,7 +484,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
             percentage if order_executed else 0,
             reason,
             btc_balance,
-            krw_balance,
+            usdt_balance,
             btc_avg_buy_price,
             current_btc_price,
             reflection
@@ -489,7 +493,8 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
         logger.error(f"Database connection error: {e}")
         return
 
-# 보조 함수들 (예시)
+# 보조 함수들
+
 def get_fear_and_greed_index():
     try:
         response = requests.get("https://api.alternative.me/fng/?limit=1")
@@ -516,8 +521,6 @@ def get_bitcoin_news():
         return []
 
 if __name__ == "__main__":
-    # MongoDB 초기화는 이미 연결 시 수행됨
-    
     # 중복 실행 방지를 위한 변수
     trading_in_progress = False
     
