@@ -18,20 +18,27 @@ import ta  # Technical Analysis 라이브러리
 from pybit.unified_trading import HTTP
 from time import sleep
 from functools import wraps
+from logging.handlers import RotatingFileHandler
 
 # 환경 변수 로드
 load_dotenv()
 
 # 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,  # DEBUG 레벨을 INFO로 변경하여 로그 양 줄임
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # 콘솔에 로그 출력
-        logging.FileHandler("trading_bot.log")  # 로그를 파일에도 기록
-    ]
-)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # DEBUG 레벨을 INFO로 변경하여 로그 양 줄임
+
+# 로그 포맷 설정
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# 콘솔 핸들러 설정
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# 파일 핸들러 설정 (로그 파일 회전)
+file_handler = RotatingFileHandler("trading_bot.log", maxBytes=5*1024*1024, backupCount=5)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
 logger.info("트레이딩 봇 초기화 시작")
 
@@ -60,6 +67,9 @@ mode = 1  # 1 - Isolated, 0 - Cross
 leverage = 10
 qty = 50    # USDT 기준 주문 크기
 max_pos = 50  # Max current orders
+
+# 전역 변수 정의 (한 번만)
+trading_in_progress = False
 
 # 재시도 데코레이터 정의
 def retry_on_exception(max_retries=5, initial_delay=1, backoff_factor=2):
@@ -986,9 +996,6 @@ def first_run():
 initial_and_recurring_schedule()
 
 logger.info("스케줄러 설정 완료")
-
-# 중복 실행 방지를 위한 변수
-trading_in_progress = False
 
 # 메인 스크립트 실행
 if __name__ == "__main__":
