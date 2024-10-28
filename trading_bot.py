@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from pybit import HTTP
+from pybit.usdt_perpetual import HTTP  # 올바른 임포트 경로 사용
 import pandas as pd
 import json
 import openai
