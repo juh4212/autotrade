@@ -49,14 +49,16 @@ def setup_bybit():
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
 
-# Bybit 계좌 잔고 조회 (전체 잔고 및 사용 가능한 잔고 표시)
+# Bybit 계좌 잔고 조회 (전체 응답 출력)
 def get_account_balance(bybit):
     try:
-        # 선물 계좌 잔고 확인
+        # 선물 계좌 잔고 확인 (전체 응답 출력)
         wallet_balance = bybit.get_wallet_balance(coin="USDT")
+        print("Bybit API 응답 데이터:", wallet_balance)  # 전체 응답 데이터 출력
+        
         if 'result' in wallet_balance and wallet_balance['result']:
-            usdt_total = wallet_balance['result']['USDT']['equity']      # 총 잔고
-            usdt_available = wallet_balance['result']['USDT']['available_balance']  # 사용 가능한 잔고
+            usdt_total = wallet_balance['result']['USDT'].get('equity', 0)  # 총 잔고
+            usdt_available = wallet_balance['result']['USDT'].get('available_balance', 0)  # 사용 가능한 잔고
             logger.info(f"USDT 총 잔고: {usdt_total}, 사용 가능한 잔고: {usdt_available}")
             return {"USDT_total": usdt_total, "USDT_available": usdt_available}
         else:
