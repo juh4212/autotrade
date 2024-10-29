@@ -255,7 +255,7 @@ def add_indicators(df):
         df['macd_signal'] = macd.macd_signal()
         df['macd_diff'] = macd.macd_diff()
 
-        # 이동평균선 (단기, 장기)
+        # 이동평균선 (단기, 장기) 추가
         df['sma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
         df['ema_12'] = ta.trend.EMAIndicator(close=df['close'], window=12).ema_indicator()
 
