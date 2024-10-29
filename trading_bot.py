@@ -387,20 +387,20 @@ Example Response 3:
                 {
                     "role": "system",
                     "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
-
+    
 - Technical indicators and market data
 - Overall market sentiment
 - Recent trading performance and reflection
-
+    
 Recent trading reflection:
 {reflection}
-
+    
 Based on your analysis, make a decision and provide your reasoning.
-
+    
 Please provide your response in the following JSON format:
-
+    
 {examples}
-
+    
 Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
 Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""
                 },
@@ -568,15 +568,6 @@ def main():
         schedule.every(4).hours.do(job, trades_collection, bybit)
         logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
 
-        # 또는 특정 시간에 실행하도록 설정 (사용자가 시도한 방법)
-        # schedule.every().day.at("00:00").do(job, trades_collection, bybit)
-        # schedule.every().day.at("04:00").do(job, trades_collection, bybit)
-        # schedule.every().day.at("08:00").do(job, trades_collection, bybit)
-        # schedule.every().day.at("12:00").do(job, trades_collection, bybit)
-        # schedule.every().day.at("16:00").do(job, trades_collection, bybit)
-        # schedule.every().day.at("20:00").do(job, trades_collection, bybit)
-
-        # 무한 루프를 통해 스케줄된 작업 실행
         while True:
             schedule.run_pending()
             time.sleep(1)
