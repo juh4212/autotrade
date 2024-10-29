@@ -401,7 +401,6 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
         except Exception as e:
             logger.error(f"AI 응답 처리 오류: {e}")
 
-    if __name__ == "__main__":
         # MongoDB와 Bybit 연결 설정
         trades_collection = setup_mongodb()
         bybit = setup_bybit()
