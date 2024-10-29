@@ -15,8 +15,8 @@ services:
 
   trading_bot:
     build:
-      context: ./trading_bot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.trading_bot
     container_name: trading_bot
     restart: always
     env_file:
@@ -28,8 +28,8 @@ services:
 
   streamlit_app:
     build:
-      context: ./streamlit_app
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.streamlit
     container_name: streamlit_app
     restart: always
     env_file:
