@@ -52,16 +52,34 @@ def setup_bybit():
 # Bybit 계좌 잔고 조회 (전체 응답 출력)
 def get_account_balance(bybit):
     try:
-        # 선물 계좌 잔고 확인 (모든 파라미터 제거)
-        wallet_balance = bybit.get_wallet_balance()
+        # UNIFIED 계좌 유형의 전체 잔고 확인
+        wallet_balance = bybit.get_wallet_balance(accountType="UNIFIED")
         print("Bybit API 응답 데이터:", wallet_balance)  # 전체 응답 데이터 출력
         
         if 'result' in wallet_balance and wallet_balance['result']:
-            # 응답 데이터에서 USDT 잔고 정보 추출
-            usdt_total = wallet_balance['result']['USDT'].get('equity', 0)  # 총 잔고
-            usdt_available = wallet_balance['result']['USDT'].get('available_balance', 0)  # 사용 가능한 잔고
-            logger.info(f"USDT 총 잔고: {usdt_total}, 사용 가능한 잔고: {usdt_available}")
-            return {"USDT_total": usdt_total, "USDT_available": usdt_available}
+            # 응답 데이터에서 잔고 정보 추출
+            account_info = wallet_balance['result'][0]  # 첫 번째 계정 정보 가져오기
+            total_equity = account_info.get('totalEquity', 0)  # 전체 자산
+            total_available_balance = account_info.get('totalAvailableBalance', 0)  # 사용 가능한 자산
+            
+            # 모든 코인별 잔고 정보 추출
+            coin_balances = account_info.get('coin', [])
+            coin_data = {
+                coin['coin']: {
+                    'equity': coin.get('equity', 0),
+                    'walletBalance': coin.get('walletBalance', 0),
+                    'availableToWithdraw': coin.get('availableToWithdraw', 0)
+                } for coin in coin_balances
+            }
+            
+            logger.info(f"총 자산: {total_equity}, 사용 가능한 자산: {total_available_balance}")
+            logger.info("코인별 잔고 정보:", coin_data)
+            
+            return {
+                "total_equity": total_equity,
+                "total_available_balance": total_available_balance,
+                "coin_data": coin_data
+            }
         else:
             logger.error("잔고 데이터를 가져오지 못했습니다.")
             return None
