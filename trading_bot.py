@@ -1,9 +1,16 @@
 import os
+import time
 import logging
-from datetime import datetime
+import requests
 from pymongo import MongoClient
-from pybit.unified_trading import HTTP  # Bybit v5에 맞는 통합 API
+from pybit.bybit_api import USDTPerpetual  # USDT 선물 거래에 맞는 모듈
+import openai
+import schedule
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+import pandas as pd
+import json
+import re
 
 # 환경 변수 로드
 load_dotenv()
