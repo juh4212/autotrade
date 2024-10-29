@@ -33,7 +33,7 @@ bybit = None
 trading_in_progress = False
 
 # MongoDB 설정 및 연결
-def setup_mongodb():
+def init_db():
     global trades_collection
     mongo_uri = os.getenv("MONGODB_URI")
     if not mongo_uri:
@@ -561,7 +561,7 @@ def job():
 
 # 스케줄링 설정과 무한 루프 실행
 def schedule_trading():
-    # 매 4시간마다 실행
+    # 매 4시간마다 실행 (00:00, 04:00, 08:00, 12:00, 16:00, 20:00)
     schedule.every().day.at("00:00").do(job)
     schedule.every().day.at("04:00").do(job)
     schedule.every().day.at("08:00").do(job)
@@ -579,7 +579,7 @@ def schedule_trading():
 def main():
     try:
         # MongoDB와 Bybit 연결 설정
-        setup_mongodb()
+        init_db()
         setup_bybit()
 
         # 초기 잔고 기록
@@ -593,5 +593,5 @@ def main():
     except Exception as e:
         logger.critical(f"시스템 오류: {e}")
 
-# 스크립트가 직접 실행될 때 main 함수 호출
-main()
+if __name__ == "__main__":
+    main()
