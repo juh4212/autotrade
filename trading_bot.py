@@ -28,10 +28,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 글로벌 변수 설정
+trades_collection = None
+bybit = None
 trading_in_progress = False
 
 # MongoDB 설정 및 연결
 def setup_mongodb():
+    global trades_collection
     mongo_uri = os.getenv("MONGODB_URI")
     if not mongo_uri:
         logger.critical("MONGODB_URI 환경 변수가 설정되지 않았습니다.")
@@ -41,13 +44,13 @@ def setup_mongodb():
         db = client['bitcoin_trades_db']
         trades_collection = db['trades']
         logger.info("MongoDB 연결 완료!")
-        return trades_collection
     except Exception as e:
         logger.critical(f"MongoDB 연결 오류: {e}")
         raise
 
 # Bybit API 설정
 def setup_bybit():
+    global bybit
     try:
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
@@ -60,13 +63,13 @@ def setup_bybit():
             api_secret=api_secret
         )
         logger.info("Bybit API 연결 완료!")
-        return bybit
     except Exception as e:
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
 
 # Bybit 계좌 잔고 조회
-def get_account_balance(bybit):
+def get_account_balance():
+    global bybit
     try:
         # Wallet Balance 조회 (통합 계좌)
         wallet_balance = bybit.get_wallet_balance(coin=None, accountType="UNIFIED")
@@ -92,20 +95,22 @@ def get_account_balance(bybit):
         return None
 
 # MongoDB에 잔고 기록
-def log_balance_to_mongodb(collection, balance_data):
+def log_balance_to_mongodb(balance_data):
+    global trades_collection
     balance_record = {
         "timestamp": datetime.utcnow(),
         "equity": balance_data["equity"],
         "available_to_withdraw": balance_data["available_to_withdraw"]
     }
     try:
-        collection.insert_one(balance_record)
+        trades_collection.insert_one(balance_record)
         logger.info("계좌 잔고가 MongoDB에 성공적으로 저장되었습니다.")
     except Exception as e:
         logger.error(f"MongoDB에 계좌 잔고 저장 오류: {e}")
 
 # 거래 기록을 DB에 저장하는 함수
-def log_trade(collection, decision, percentage, reason, usdt_balance, btc_usdt_price, reflection=''):
+def log_trade(decision, percentage, reason, usdt_balance, btc_usdt_price, reflection=''):
+    global trades_collection
     trade_record = {
         "timestamp": datetime.utcnow(),
         "decision": decision,
@@ -116,16 +121,17 @@ def log_trade(collection, decision, percentage, reason, usdt_balance, btc_usdt_p
         "reflection": reflection
     }
     try:
-        collection.insert_one(trade_record)
+        trades_collection.insert_one(trade_record)
         logger.info("거래 기록이 MongoDB에 성공적으로 저장되었습니다.")
     except Exception as e:
         logger.error(f"MongoDB에 거래 기록 저장 오류: {e}")
 
 # 최근 투자 기록 조회
-def get_recent_trades(collection, days=7):
+def get_recent_trades(days=7):
+    global trades_collection
     seven_days_ago = datetime.utcnow() - timedelta(days=days)
     try:
-        cursor = collection.find({"timestamp": {"$gt": seven_days_ago}}).sort("timestamp", -1)
+        cursor = trades_collection.find({"timestamp": {"$gt": seven_days_ago}}).sort("timestamp", -1)
         trades = list(cursor)
         if not trades:
             logger.info("최근 거래 기록이 없습니다.")
@@ -236,7 +242,8 @@ def add_indicators(df):
     return df
 
 # 현재 가격 조회 함수 (Bybit)
-def get_current_price_bybit(bybit, symbol):
+def get_current_price_bybit(symbol):
+    global bybit
     try:
         ticker = bybit.query_public("v5/market/ticker", {"symbol": symbol})
         if ticker['ret_code'] == 0:
@@ -249,11 +256,12 @@ def get_current_price_bybit(bybit, symbol):
         return 0
 
 # AI 트레이딩 로직
-def ai_trading(trades_collection, bybit):
+def ai_trading():
+    global trades_collection, bybit
     ### 데이터 가져오기
     # 1. 현재 투자 상태 조회
     try:
-        balance_data = get_account_balance(bybit)
+        balance_data = get_account_balance()
         if not balance_data:
             logger.error("잔고 데이터를 가져오지 못했습니다.")
             return
@@ -341,7 +349,7 @@ def ai_trading(trades_collection, bybit):
     ### AI에게 데이터 제공하고 판단 받기
     try:
         # 최근 거래 내역 가져오기
-        recent_trades = get_recent_trades(trades_collection)
+        recent_trades = get_recent_trades()
         
         # 현재 시장 데이터 수집
         current_market_data = {
@@ -387,20 +395,20 @@ Example Response 3:
                 {
                     "role": "system",
                     "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
-    
+
 - Technical indicators and market data
 - Overall market sentiment
 - Recent trading performance and reflection
-    
+
 Recent trading reflection:
 {reflection}
-    
+
 Based on your analysis, make a decision and provide your reasoning.
-    
+
 Please provide your response in the following JSON format:
-    
+
 {examples}
-    
+
 Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
 Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""
                 },
@@ -519,15 +527,14 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
         # 거래 실행 여부와 관계없이 현재 잔고 조회
         try:
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
-            balance_data = get_account_balance(bybit)
+            balance_data = get_account_balance()
             if balance_data:
                 usdt_balance = balance_data['available_to_withdraw']
                 # 현재 BTC 가격 조회
-                current_btc_price = get_current_price_bybit(bybit, "BTCUSDT")
+                current_btc_price = get_current_price_bybit("BTCUSDT")
 
                 # 거래 기록을 DB에 저장하기
                 log_trade(
-                    trades_collection, 
                     decision, 
                     percentage if order_executed else 0, 
                     reason, 
@@ -539,38 +546,50 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
 
 # 트레이딩 작업을 수행하는 함수
-def job(trades_collection, bybit):
+def job():
     global trading_in_progress
     if trading_in_progress:
         logger.warning("Trading job is already in progress, skipping this run.")
         return
     try:
         trading_in_progress = True
-        ai_trading(trades_collection, bybit)
+        ai_trading()
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
         trading_in_progress = False
 
+# 스케줄링 설정과 무한 루프 실행
+def schedule_trading():
+    # 매 4시간마다 실행
+    schedule.every().day.at("00:00").do(job)
+    schedule.every().day.at("04:00").do(job)
+    schedule.every().day.at("08:00").do(job)
+    schedule.every().day.at("12:00").do(job)
+    schedule.every().day.at("16:00").do(job)
+    schedule.every().day.at("20:00").do(job)
+
+    logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 # 스크립트 시작 시 초기 설정 및 스케줄링 실행
 def main():
     try:
         # MongoDB와 Bybit 연결 설정
-        trades_collection = setup_mongodb()
-        bybit = setup_bybit()
+        setup_mongodb()
+        setup_bybit()
 
         # 초기 잔고 기록
-        balance_data = get_account_balance(bybit)
+        balance_data = get_account_balance()
         if balance_data:
-            log_balance_to_mongodb(trades_collection, balance_data)
+            log_balance_to_mongodb(balance_data)
 
-        # 트레이딩 스케줄링 설정: 매 4시간마다 실행
-        schedule.every(4).hours.do(job, trades_collection, bybit)
-        logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
+        # 트레이딩 스케줄링 시작
+        schedule_trading()
 
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
     except Exception as e:
         logger.critical(f"시스템 오류: {e}")
 
