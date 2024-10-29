@@ -548,19 +548,29 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
 # 트레이딩 작업을 수행하는 함수
 def job():
     global trading_in_progress
+
     if trading_in_progress:
         logger.warning("Trading job is already in progress, skipping this run.")
         return
 
     try:
+        # 중복 실행 방지 플래그 설정
         trading_in_progress = True
         logger.info("Trading job started.")
-        ai_trading()  # 실제 트레이딩 로직 실행
-        logger.info("Trading job completed.")
+
+        # 트레이딩 로직 실행
+        ai_trading()
+
+        logger.info("Trading job completed successfully.")
+
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        # 예외 발생 시 오류 로깅
+        logger.error(f"An error occurred during the trading job: {e}")
+
     finally:
-        trading_in_progress = False  # 오류 여부와 상관없이 trading_in_progress 플래그를 다시 False로 설정
+        # 오류 여부와 상관없이 trading_in_progress 플래그를 False로 설정
+        trading_in_progress = False
+
 
 # 스케줄링 설정과 무한 루프 실행
 def schedule_trading():
