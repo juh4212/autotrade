@@ -222,49 +222,6 @@ def add_indicators(df):
 
     return df
 
-# 공포 탐욕 지수 조회
-def get_fear_and_greed_index():
-    url = "https://api.alternative.me/fng/"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        return data['data'][0]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching Fear and Greed Index: {e}")
-        return None
-
-# 뉴스 데이터 가져오기
-def get_bitcoin_news():
-    serpapi_key = os.getenv("SERPAPI_API_KEY")
-    if not serpapi_key:
-        logger.error("SERPAPI API key가 설정되지 않았습니다.")
-        return []  # 빈 리스트 반환
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_news",
-        "q": "bitcoin OR btc",
-        "api_key": serpapi_key
-    }
-    
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        
-        news_results = data.get("news_results", [])
-        headlines = []
-        for item in news_results:
-            headlines.append({
-                "title": item.get("title", ""),
-                "date": item.get("date", "")
-            })
-        
-        return headlines[:5]
-    except requests.RequestException as e:
-        logger.error(f"Error fetching news: {e}")
-        return []
-
 # 현재 가격 조회 함수 (Bybit)
 def get_current_price_bybit(bybit, symbol):
     try:
@@ -368,12 +325,6 @@ def ai_trading(trades_collection, bybit):
         df_daily_recent = pd.DataFrame()
         df_hourly_recent = pd.DataFrame()
     
-    # 4. 공포 탐욕 지수 가져오기
-    fear_greed_index = get_fear_and_greed_index()
-    
-    # 5. 뉴스 헤드라인 가져오기
-    news_headlines = get_bitcoin_news()
-    
     ### AI에게 데이터 제공하고 판단 받기
     try:
         # 최근 거래 내역 가져오기
@@ -381,8 +332,6 @@ def ai_trading(trades_collection, bybit):
         
         # 현재 시장 데이터 수집
         current_market_data = {
-            "fear_greed_index": fear_greed_index,
-            "news_headlines": news_headlines,
             "orderbook": orderbook,
             "daily_ohlcv": df_daily_recent.to_dict(orient='records'),
             "hourly_ohlcv": df_hourly_recent.to_dict(orient='records')
@@ -420,7 +369,7 @@ Example Response 3:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:\n\n- Technical indicators and market data\n- Recent news headlines and their potential impact on Bitcoin price\n- The Fear and Greed Index and its implications\n- Overall market sentiment\n- Recent trading performance and reflection\n\nRecent trading reflection:\n{reflection}\n\nBased on your analysis, make a decision and provide your reasoning.\n\nPlease provide your response in the following JSON format:\n\n{examples}\n\nEnsure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.\nYour percentage should reflect the strength of your conviction in the decision based on the analyzed data."
+                    "content": "You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:\n\n- Technical indicators and market data\n- Recent news headlines and their potential impact on Bitcoin price\n- Overall market sentiment\n- Recent trading performance and reflection\n\nRecent trading reflection:\n{reflection}\n\nBased on your analysis, make a decision and provide your reasoning.\n\nPlease provide your response in the following JSON format:\n\n{examples}\n\nEnsure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.\nYour percentage should reflect the strength of your conviction in the decision based on the analyzed data."
                 },
                 {
                     "role": "user",
@@ -428,8 +377,6 @@ Example Response 3:
 Orderbook: {json.dumps(orderbook)}
 Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
 Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
-Recent news headlines: {json.dumps(news_headlines)}
-Fear and Greed Index: {json.dumps(fear_greed_index)}
 """
                 }
             ],
