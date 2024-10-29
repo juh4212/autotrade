@@ -553,11 +553,11 @@ def job():
         return
     try:
         trading_in_progress = True
-        ai_trading()  # 트레이딩 로직을 실행
+        ai_trading()  # 여기에 실제 트레이딩 로직을 실행하도록 함
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
-        trading_in_progress = False
+        trading_in_progress = False  # 오류 여부와 상관없이 trading_in_progress 플래그를 다시 False로 설정
 
 # 스케줄링 설정과 무한 루프 실행
 def schedule_trading():
