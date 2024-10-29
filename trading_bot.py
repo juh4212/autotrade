@@ -160,22 +160,22 @@ def generate_reflection(trades_df, current_market_data):
             messages=[
                 {"role": "system", "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."},
                 {"role": "user", "content": f"""
-Recent trading data:
-{trades_df.to_json(orient='records')}
+    Recent trading data:
+    {trades_df.to_json(orient='records')}
 
-Current market data:
-{json.dumps(current_market_data)}
+    Current market data:
+    {json.dumps(current_market_data)}
 
-Overall performance in the last 7 days: {performance:.2f}%
+    Overall performance in the last 7 days: {performance:.2f}%
 
-Please analyze this data and provide:
-1. A brief reflection on the recent trading decisions
-2. Insights on what worked well and what didn't
-3. Suggestions for improvement in future trading decisions
-4. Any patterns or trends you notice in the market data
+    Please analyze this data and provide:
+    1. A brief reflection on the recent trading decisions
+    2. Insights on what worked well and what didn't
+    3. Suggestions for improvement in future trading decisions
+    4. Any patterns or trends you notice in the market data
 
-Limit your response to 250 words or less.
-"""}
+    Limit your response to 250 words or less.
+    """}
             ],
             max_tokens=500
         )
@@ -310,9 +310,9 @@ def ai_trading(trades_collection, bybit):
                 df_hourly['volume'] = df_hourly['volume'].astype(float)
                 df_hourly = add_indicators(df_hourly)
                 
-                # 최근 데이터만 사용하도록 설정 (메모리 절약)
-                df_daily_recent = df_daily.tail(60)
-                df_hourly_recent = df_hourly.tail(48)
+                # 최근 데이터만 사용하도록 설정 (메모리 절약) 및 결측치 제거
+                df_daily_recent = df_daily.tail(60).dropna()
+                df_hourly_recent = df_hourly.tail(48).dropna()
             else:
                 logger.error(f"시간별 클라인 조회 실패: {klines_response_hourly.get('ret_msg', 'No ret_msg')}")
                 df_hourly_recent = pd.DataFrame()
@@ -369,7 +369,23 @@ Example Response 3:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:\n\n- Technical indicators and market data\n- Recent news headlines and their potential impact on Bitcoin price\n- Overall market sentiment\n- Recent trading performance and reflection\n\nRecent trading reflection:\n{reflection}\n\nBased on your analysis, make a decision and provide your reasoning.\n\nPlease provide your response in the following JSON format:\n\n{examples}\n\nEnsure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.\nYour percentage should reflect the strength of your conviction in the decision based on the analyzed data."
+                    "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
+
+- Technical indicators and market data
+- Overall market sentiment
+- Recent trading performance and reflection
+
+Recent trading reflection:
+{reflection}
+
+Based on your analysis, make a decision and provide your reasoning.
+
+Please provide your response in the following JSON format:
+
+{examples}
+
+Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""
                 },
                 {
                     "role": "user",
@@ -498,10 +514,6 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
                 )
         except Exception as e:
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
-
-# 데이터프레임에서 결측치 제거 함수
-def dropna(df):
-    return df.dropna()
 
 # 메인 실행
 if __name__ == "__main__":
