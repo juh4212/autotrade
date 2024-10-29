@@ -350,6 +350,10 @@ def ai_trading(trades_collection, bybit):
         # 반성 및 개선 내용 생성
         reflection = generate_reflection(recent_trades, current_market_data)
         
+        if not reflection:
+            logger.error("Reflection 생성 실패. AI 트레이딩 로직 중단.")
+            return
+        
         # AI 모델에 반성 내용 제공 및 결정 생성
         # Few-shot prompting으로 JSON 예시 추가
         examples = """
@@ -531,16 +535,21 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
         except Exception as e:
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
 
-# 트레이딩 작업을 스케줄링하는 함수
-def schedule_trading(trades_collection, bybit):
-    schedule.every(4).hours.do(ai_trading, trades_collection, bybit)
-    logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
+# 트레이딩 작업을 수행하는 함수
+def job(trades_collection, bybit):
+    global trading_in_progress
+    if trading_in_progress:
+        logger.warning("Trading job is already in progress, skipping this run.")
+        return
+    try:
+        trading_in_progress = True
+        ai_trading(trades_collection, bybit)
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+    finally:
+        trading_in_progress = False
 
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# 스크립트 시작 시 초기 설정 및 스케줄링 실행
+# 초기 설정 및 스케줄링 실행
 def main():
     try:
         # MongoDB와 Bybit 연결 설정
@@ -552,9 +561,13 @@ def main():
         if balance_data:
             log_balance_to_mongodb(trades_collection, balance_data)
 
-        # 트레이딩 스케줄링 시작
-        schedule_trading(trades_collection, bybit)
+        # 트레이딩 스케줄링 설정: 매 4시간마다 실행
+        schedule.every(4).hours.do(job, trades_collection, bybit)
+        logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
 
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
     except Exception as e:
         logger.critical(f"시스템 오류: {e}")
 
