@@ -2,7 +2,7 @@ import os
 import logging
 from datetime import datetime, timedelta
 from pymongo import MongoClient
-from pybit.unified_trading import HTTP  # Bybit v5 API를 사용 중임을 가정
+from pybit.unified_trading import HTTP  # Bybit v5 API
 from dotenv import load_dotenv
 import pandas as pd
 import openai
@@ -481,7 +481,7 @@ Your percentage should reflect the strength of your conviction in the decision b
                     },
                     {
                         "role": "user",
-                        "content": f"""Current investment status: {json.dumps([balance for balance in get_account_balance().get('USDT', {}) if balance.get('coin') == 'USDT'])}
+                        "content": f"""Current investment status: {json.dumps([balance for balance in get_account_balance().get('equity', []) if balance.get('coin') == 'USDT'])}
 Orderbook: {json.dumps(orderbook)}
 Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
 Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
@@ -629,9 +629,6 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
     finally:
         logger.debug("잔고 조회 및 기록 단계 종료.")
 
-except Exception as e:
-    logger.critical(f"AI 트레이딩 로직 전체 중 예상치 못한 오류 발생: {e}")
-finally:
     logger.info("AI 트레이딩 로직 종료.")
 
 # Scheduler setup
