@@ -545,32 +545,26 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
         except Exception as e:
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
 
+import threading
+
+# 중복 실행 방지를 위한 변수 설정
+trading_in_progress_lock = threading.Lock()
+
 # 트레이딩 작업을 수행하는 함수
 def job():
-    global trading_in_progress
+    global trading_in_progress_lock
 
-    if trading_in_progress:
+    if trading_in_progress_lock.locked():
         logger.warning("Trading job is already in progress, skipping this run.")
         return
 
-    try:
-        # 중복 실행 방지 플래그 설정
-        trading_in_progress = True
-        logger.info("Trading job started.")
-
-        # 트레이딩 로직 실행
-        ai_trading()
-
-        logger.info("Trading job completed successfully.")
-
-    except Exception as e:
-        # 예외 발생 시 오류 로깅
-        logger.error(f"An error occurred during the trading job: {e}")
-
-    finally:
-        # 오류 여부와 상관없이 trading_in_progress 플래그를 False로 설정
-        trading_in_progress = False
-
+    with trading_in_progress_lock:  # Lock을 사용하여 중복 실행 방지
+        try:
+            logger.info("Trading job started.")
+            ai_trading()  # 실제 트레이딩 로직 실행
+            logger.info("Trading job completed successfully.")
+        except Exception as e:
+            logger.error(f"An error occurred during the trading job: {e}")
 
 # 스케줄링 설정과 무한 루프 실행
 def schedule_trading():
@@ -585,26 +579,8 @@ def schedule_trading():
     logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
 
     while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# 스크립트 시작 시 초기 설정 및 스케줄링 실행
-def main():
-    try:
-        # MongoDB와 Bybit 연결 설정
-        init_db()
-        setup_bybit()
-
-        # 초기 잔고 기록
-        balance_data = get_account_balance()
-        if balance_data:
-            log_balance_to_mongodb(balance_data)
-
-        # 트레이딩 스케줄링 시작
-        schedule_trading()
-
-    except Exception as e:
-        logger.critical(f"시스템 오류: {e}")
-
-if __name__ == "__main__":
-    main()
+        try:
+            schedule.run_pending()
+            time.sleep(1)
+        except Exception as e:
+            logger.error(f"An error occurred in the scheduling loop: {e}")
