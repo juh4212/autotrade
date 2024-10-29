@@ -11,6 +11,7 @@ import requests
 import ta
 import time
 import json
+import schedule
 
 # 환경 변수 로드
 load_dotenv()
@@ -26,7 +27,9 @@ logger = logging.getLogger(__name__)
 # MongoDB 설정 및 연결
 def setup_mongodb():
     mongo_uri = os.getenv("MONGODB_URI")
-    print("MongoDB URI:", mongo_uri)  # URI 확인을 위해 출력
+    if not mongo_uri:
+        logger.critical("MONGODB_URI 환경 변수가 설정되지 않았습니다.")
+        raise ValueError("MONGODB_URI 환경 변수가 설정되지 않았습니다.")
     try:
         client = MongoClient(mongo_uri)
         db = client['bitcoin_trades_db']
@@ -70,7 +73,7 @@ def get_account_balance(bybit):
             equity = float(usdt_balance.get('equity', 0))
             available_to_withdraw = float(usdt_balance.get('available_balance', 0))
 
-            logger.info(f"USDT 전체 자산: {equity}, 사용 가능한 자산: {available_to_withdraw}")
+            logger.info(f"USDT 전체 자산 (Equity): {equity}, 사용 가능한 자산 (Available to Withdraw): {available_to_withdraw}")
             return {
                 "equity": equity,
                 "available_to_withdraw": available_to_withdraw
@@ -96,15 +99,13 @@ def log_balance_to_mongodb(collection, balance_data):
         logger.error(f"MongoDB에 계좌 잔고 저장 오류: {e}")
 
 # 거래 기록을 DB에 저장하는 함수
-def log_trade(collection, decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection=''):
+def log_trade(collection, decision, percentage, reason, usdt_balance, btc_usdt_price, reflection=''):
     trade_record = {
         "timestamp": datetime.utcnow(),
         "decision": decision,
         "percentage": percentage,
         "reason": reason,
-        "btc_balance": btc_balance,
         "usdt_balance": usdt_balance,
-        "btc_avg_buy_price": btc_avg_buy_price,
         "btc_usdt_price": btc_usdt_price,
         "reflection": reflection
     }
@@ -134,12 +135,12 @@ def get_recent_trades(collection, days=7):
 def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
-    # 초기 잔고 계산 (USDT + BTC * 현재 가격)
+    # 초기 잔고 계산 (USDT)
     initial_trade = trades_df.iloc[-1]
-    initial_balance = initial_trade['usdt_balance'] + initial_trade['btc_balance'] * initial_trade['btc_usdt_price']
+    initial_balance = initial_trade['equity']
     # 최종 잔고 계산
     final_trade = trades_df.iloc[0]
-    final_balance = final_trade['usdt_balance'] + final_trade['btc_balance'] * final_trade['btc_usdt_price']
+    final_balance = final_trade['equity']
     return (final_balance - initial_balance) / initial_balance * 100
 
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
@@ -158,24 +159,30 @@ def generate_reflection(trades_df, current_market_data):
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."},
-                {"role": "user", "content": f"""
-    Recent trading data:
-    {trades_df.to_json(orient='records')}
+                {
+                    "role": "system",
+                    "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Recent trading data:
+{trades_df.to_json(orient='records')}
 
-    Current market data:
-    {json.dumps(current_market_data)}
+Current market data:
+{json.dumps(current_market_data)}
 
-    Overall performance in the last 7 days: {performance:.2f}%
+Overall performance in the last 7 days: {performance:.2f}%
 
-    Please analyze this data and provide:
-    1. A brief reflection on the recent trading decisions
-    2. Insights on what worked well and what didn't
-    3. Suggestions for improvement in future trading decisions
-    4. Any patterns or trends you notice in the market data
+Please analyze this data and provide:
+1. A brief reflection on the recent trading decisions
+2. Insights on what worked well and what didn't
+3. Suggestions for improvement in future trading decisions
+4. Any patterns or trends you notice in the market data
 
-    Limit your response to 250 words or less.
-    """}
+Limit your response to 250 words or less.
+"""
+                }
             ],
             max_tokens=500
         )
@@ -347,14 +354,14 @@ Example Response 1:
 {
   "decision": "buy",
   "percentage": 50,
-  "reason": "Based on the current market indicators and positive news, it's a good opportunity to invest."
+  "reason": "Based on the current market indicators and positive trends, it's a good opportunity to invest."
 }
 
 Example Response 2:
 {
   "decision": "sell",
   "percentage": 30,
-  "reason": "Due to negative trends in the market and high fear index, it is advisable to reduce holdings."
+  "reason": "Due to negative trends in the market, it is advisable to reduce holdings."
 }
 
 Example Response 3:
@@ -389,7 +396,7 @@ Your percentage should reflect the strength of your conviction in the decision b
                 },
                 {
                     "role": "user",
-                    "content": f"""Current investment status: {json.dumps([balance for balance in bybit.get_wallet_balance().get('result', {}).get('coin', []) if balance['coin'] in ['BTC', 'USDT']])}
+                    "content": f"""Current investment status: {json.dumps([balance for balance in bybit.get_wallet_balance().get('result', {}).get('coin', []) if balance['coin'] in ['USDT']])}
 Orderbook: {json.dumps(orderbook)}
 Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
 Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
@@ -463,26 +470,34 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
                 logger.error(f"Error executing buy order: {e}")
         elif decision.lower() == "sell":
             try:
-                # Bybit에서는 USDT 잔고가 없으므로, BTC 잔고를 사용
-                btc_balance = balance_data.get('equity', 0)  # Bybit의 'equity'가 BTC 잔고에 해당
-                sell_amount = btc_balance * (percentage / 100)
-                current_price = get_current_price_bybit(bybit, "BTCUSDT")
-                if sell_amount * current_price > 5:  # 최소 주문 금액
-                    logger.info(f"Sell Order Executed: {percentage}% of held BTC")
-                    order = bybit.place_active_order(
-                        symbol="BTCUSDT",
-                        side="Sell",
-                        order_type="Market",
-                        qty=sell_amount,
-                        time_in_force="GoodTillCancel"
-                    )
-                    if order and order['ret_code'] == 0:
-                        logger.info(f"Sell order executed successfully: {order}")
-                        order_executed = True
+                # Bybit 선물에서는 실제 BTC 잔고가 없으므로, 포지션을 종료하여 USDT를 회수합니다.
+                # 현재 포지션 조회
+                position = bybit.get_position(symbol="BTCUSDT")
+                if position['ret_code'] == 0 and 'result' in position and len(position['result']) > 0:
+                    current_position = position['result'][0]
+                    size = float(current_position.get('size', 0))
+                    if size > 0:
+                        sell_size = size * (percentage / 100)
+                        if sell_size > 0:
+                            logger.info(f"Sell Order Executed: {percentage}% of current position size")
+                            order = bybit.place_active_order(
+                                symbol="BTCUSDT",
+                                side="Sell",
+                                order_type="Market",
+                                qty=sell_size,
+                                time_in_force="GoodTillCancel"
+                            )
+                            if order and order['ret_code'] == 0:
+                                logger.info(f"Sell order executed successfully: {order}")
+                                order_executed = True
+                            else:
+                                logger.error(f"Sell order failed: {order.get('ret_msg', 'No ret_msg')}")
+                        else:
+                            logger.warning("Sell Order Failed: Calculated sell size is zero.")
                     else:
-                        logger.error(f"Sell order failed: {order.get('ret_msg', 'No ret_msg')}")
+                        logger.info("No open position to sell.")
                 else:
-                    logger.warning("Sell Order Failed: Insufficient BTC (less than 5 USDT worth)")
+                    logger.error(f"포지션 조회 실패 또는 포지션 없음: {position.get('ret_msg', 'No ret_msg')}")
             except Exception as e:
                 logger.error(f"Error executing sell order: {e}")
         elif decision.lower() == "hold":
@@ -506,29 +521,39 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
                     decision, 
                     percentage if order_executed else 0, 
                     reason, 
-                    balance_data.get('btc_balance', 0),  # Bybit의 BTC 잔고 필드에 맞게 조정
                     usdt_balance, 
-                    balance_data.get('btc_avg_buy_price', 0), 
                     current_btc_price, 
                     reflection
                 )
         except Exception as e:
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
 
-# 메인 실행
-if __name__ == "__main__":
+# 트레이딩 작업을 스케줄링하는 함수
+def schedule_trading(trades_collection, bybit):
+    schedule.every(4).hours.do(ai_trading, trades_collection, bybit)
+    logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# 스크립트 시작 시 초기 설정 및 스케줄링 실행
+def main():
     try:
         # MongoDB와 Bybit 연결 설정
         trades_collection = setup_mongodb()
         bybit = setup_bybit()
-    
+
         # 초기 잔고 기록
         balance_data = get_account_balance(bybit)
         if balance_data:
             log_balance_to_mongodb(trades_collection, balance_data)
-    
-        # AI 트레이딩 실행
-        ai_trading(trades_collection, bybit)
-    
+
+        # 트레이딩 스케줄링 시작
+        schedule_trading(trades_collection, bybit)
+
     except Exception as e:
         logger.critical(f"시스템 오류: {e}")
+
+# 스크립트가 직접 실행될 때 main 함수 호출
+main()
