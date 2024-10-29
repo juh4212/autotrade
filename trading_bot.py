@@ -2,7 +2,7 @@ import os
 import logging
 from datetime import datetime, timedelta
 from pymongo import MongoClient
-from pybit import HTTP  # Bybit v5 API
+from pybit.unified_trading import HTTP  # Bybit v5 API를 사용 중임을 가정
 from dotenv import load_dotenv
 import pandas as pd
 import openai
@@ -54,7 +54,7 @@ def init_db():
     else:
         logger.info("MongoDB 연결 완료!")
     finally:
-        # Optional: Close the client if not needed further
+        # 필요 시 클라이언트 종료 코드 추가 가능
         pass
 
 # Bybit API 설정
@@ -77,7 +77,7 @@ def setup_bybit():
     else:
         logger.info("Bybit API 연결 완료!")
     finally:
-        # Any cleanup if necessary
+        # 필요 시 추가 정리 코드
         pass
 
 # Bybit 계좌 잔고 조회
@@ -396,11 +396,11 @@ def ai_trading():
                 df_hourly = pd.DataFrame()
         finally:
             # 최근 데이터만 사용하도록 설정 (메모리 절약) 및 결측치 제거
-            if not df_daily.empty:
+            if 'df_daily' in locals() and not df_daily.empty:
                 df_daily_recent = df_daily.tail(60).dropna()
             else:
                 df_daily_recent = pd.DataFrame()
-            if not df_hourly.empty:
+            if 'df_hourly' in locals() and not df_hourly.empty:
                 df_hourly_recent = df_hourly.tail(48).dropna()
             else:
                 df_hourly_recent = pd.DataFrame()
@@ -481,7 +481,7 @@ Your percentage should reflect the strength of your conviction in the decision b
                     },
                     {
                         "role": "user",
-                        "content": f"""Current investment status: {json.dumps([balance for balance in bybit.get_wallet_balance().get('result', {}).get('coin', []) if balance['coin'] in ['USDT']])}
+                        "content": f"""Current investment status: {json.dumps([balance for balance in get_account_balance().get('USDT', {}) if balance.get('coin') == 'USDT'])}
 Orderbook: {json.dumps(orderbook)}
 Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
 Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
@@ -490,149 +490,149 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
                 ],
                 max_tokens=500
             )
-        except openai.error.OpenAIError as e:
-            logger.error(f"OpenAI API 오류 during decision making: {e}")
-            return
-        except Exception as e:
-            logger.error(f"결정 생성 중 예상치 못한 오류 발생: {e}")
-            return
-        else:
-            try:
-                response_text = response['choices'][0]['message']['content']
-                logger.debug(f"AI 응답: {response_text}")
-            except (KeyError, IndexError) as e:
-                logger.error(f"AI 응답 파싱 오류: {e}")
-                return
-        finally:
-            logger.debug("AI 결정 생성 단계 종료.")
-
-        # AI 응답 파싱
-        def parse_ai_response(response_text):
-            try:
-                json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    parsed_json = json.loads(json_str)
-                    decision = parsed_json.get('decision')
-                    percentage = parsed_json.get('percentage')
-                    reason = parsed_json.get('reason')
-                    return {'decision': decision, 'percentage': percentage, 'reason': reason}
-                else:
-                    logger.error("AI 응답에서 JSON을 찾을 수 없습니다.")
-                    return None
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON 파싱 오류: {e}")
-                return None
-
-        parsed_response = parse_ai_response(response_text)
-        if not parsed_response:
-            logger.error("AI 응답 파싱 실패.")
-            return
-
-        decision = parsed_response.get('decision')
-        percentage = parsed_response.get('percentage')
-        reason = parsed_response.get('reason')
-
-        if not decision or reason is None:
-            logger.error("AI 응답에 불완전한 데이터가 포함되어 있습니다.")
-            return
-
-        logger.info(f"AI Decision: {decision.upper()}")
-        logger.info(f"Percentage: {percentage}")
-        logger.info(f"Decision Reason: {reason}")
-
-        order_executed = False
-
-        # 거래 실행
-        try:
-            if decision.lower() == "buy":
-                buy_amount = balance_data['available_to_withdraw'] * (percentage / 100) * 0.9995  # 수수료 고려
-                if buy_amount > 5:  # Bybit은 최소 주문 금액을 USDT 기준으로 설정
-                    logger.info(f"Buy Order Executed: {percentage}% of available USDT")
-                    order = bybit.place_active_order(
-                        symbol="BTCUSDT",
-                        side="Buy",
-                        order_type="Market",
-                        qty=buy_amount,
-                        time_in_force="GoodTillCancel"
-                    )
-                    if order and order['ret_code'] == 0:
-                        logger.info(f"Buy order executed successfully: {order}")
-                        order_executed = True
-                    else:
-                        logger.error(f"Buy order 실패: {order.get('ret_msg', 'No ret_msg')}")
-                else:
-                    logger.warning("Buy Order Failed: Insufficient USDT (less than 5 USDT)")
-            elif decision.lower() == "sell":
-                try:
-                    position = bybit.get_position(symbol="BTCUSDT")
-                    if position['ret_code'] == 0 and 'result' in position and len(position['result']) > 0:
-                        current_position = position['result'][0]
-                        size = float(current_position.get('size', 0))
-                        if size > 0:
-                            sell_size = size * (percentage / 100)
-                            if sell_size > 0:
-                                logger.info(f"Sell Order Executed: {percentage}% of current position size")
-                                order = bybit.place_active_order(
-                                    symbol="BTCUSDT",
-                                    side="Sell",
-                                    order_type="Market",
-                                    qty=sell_size,
-                                    time_in_force="GoodTillCancel"
-                                )
-                                if order and order['ret_code'] == 0:
-                                    logger.info(f"Sell order executed successfully: {order}")
-                                    order_executed = True
-                                else:
-                                    logger.error(f"Sell order 실패: {order.get('ret_msg', 'No ret_msg')}")
-                            else:
-                                logger.warning("Sell Order Failed: Calculated sell size is zero.")
-                        else:
-                            logger.info("판매할 포지션이 없습니다.")
-                    else:
-                        logger.error(f"포지션 조회 실패 또는 포지션 없음: {position.get('ret_msg', 'No ret_msg')}")
-                except Exception as e:
-                    logger.error(f"Sell order 실행 중 오류: {e}")
-            elif decision.lower() == "hold":
-                logger.info("Decision is to hold. No action taken.")
-            else:
-                logger.error("AI로부터 유효하지 않은 결정이 전달되었습니다.")
-                return
-        except Exception as e:
-            logger.error(f"거래 실행 중 예상치 못한 오류 발생: {e}")
-        else:
-            logger.info("거래 실행 과정 완료.")
-        finally:
-            logger.debug("거래 실행 단계 종료.")
-
-        # 거래 실행 여부와 관계없이 현재 잔고 조회 및 기록
-        try:
-            time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
-            balance_data = get_account_balance()
-            if balance_data:
-                usdt_balance = balance_data['available_to_withdraw']
-                current_btc_price = get_current_price_bybit("BTCUSDT")
-
-                # 거래 기록을 DB에 저장하기
-                log_trade(
-                    decision, 
-                    percentage if order_executed else 0, 
-                    reason, 
-                    usdt_balance, 
-                    current_btc_price, 
-                    reflection
-                )
-        except Exception as e:
-            logger.error(f"잔고 조회 및 거래 기록 저장 중 오류 발생: {e}")
-        else:
-            logger.info("잔고 조회 및 거래 기록 저장 완료.")
-        finally:
-            logger.debug("잔고 조회 및 기록 단계 종료.")
-
+    except openai.error.OpenAIError as e:
+        logger.error(f"OpenAI API 오류 during decision making: {e}")
+        return
     except Exception as e:
-        logger.critical(f"AI 트레이딩 로직 전체 중 예상치 못한 오류 발생: {e}")
+        logger.error(f"결정 생성 중 예상치 못한 오류 발생: {e}")
+        return
+    else:
+        try:
+            response_text = response['choices'][0]['message']['content']
+            logger.debug(f"AI 응답: {response_text}")
+        except (KeyError, IndexError) as e:
+            logger.error(f"AI 응답 파싱 오류: {e}")
+            return
     finally:
-        logger.info("AI 트레이딩 로직 종료.")
+        logger.debug("AI 결정 생성 단계 종료.")
+
+    # AI 응답 파싱
+    def parse_ai_response(response_text):
+        try:
+            json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                parsed_json = json.loads(json_str)
+                decision = parsed_json.get('decision')
+                percentage = parsed_json.get('percentage')
+                reason = parsed_json.get('reason')
+                return {'decision': decision, 'percentage': percentage, 'reason': reason}
+            else:
+                logger.error("AI 응답에서 JSON을 찾을 수 없습니다.")
+                return None
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON 파싱 오류: {e}")
+            return None
+
+    parsed_response = parse_ai_response(response_text)
+    if not parsed_response:
+        logger.error("AI 응답 파싱 실패.")
+        return
+
+    decision = parsed_response.get('decision')
+    percentage = parsed_response.get('percentage')
+    reason = parsed_response.get('reason')
+
+    if not decision or reason is None:
+        logger.error("AI 응답에 불완전한 데이터가 포함되어 있습니다.")
+        return
+
+    logger.info(f"AI Decision: {decision.upper()}")
+    logger.info(f"Percentage: {percentage}")
+    logger.info(f"Decision Reason: {reason}")
+
+    order_executed = False
+
+    # 거래 실행
+    try:
+        if decision.lower() == "buy":
+            buy_amount = balance_data['available_to_withdraw'] * (percentage / 100) * 0.9995  # 수수료 고려
+            if buy_amount > 5:  # Bybit은 최소 주문 금액을 USDT 기준으로 설정
+                logger.info(f"Buy Order Executed: {percentage}% of available USDT")
+                order = bybit.place_active_order(
+                    symbol="BTCUSDT",
+                    side="Buy",
+                    order_type="Market",
+                    qty=buy_amount,
+                    time_in_force="GoodTillCancel"
+                )
+                if order and order['ret_code'] == 0:
+                    logger.info(f"Buy order executed successfully: {order}")
+                    order_executed = True
+                else:
+                    logger.error(f"Buy order 실패: {order.get('ret_msg', 'No ret_msg')}")
+            else:
+                logger.warning("Buy Order Failed: Insufficient USDT (less than 5 USDT)")
+        elif decision.lower() == "sell":
+            try:
+                position = bybit.get_position(symbol="BTCUSDT")
+                if position['ret_code'] == 0 and 'result' in position and len(position['result']) > 0:
+                    current_position = position['result'][0]
+                    size = float(current_position.get('size', 0))
+                    if size > 0:
+                        sell_size = size * (percentage / 100)
+                        if sell_size > 0:
+                            logger.info(f"Sell Order Executed: {percentage}% of current position size")
+                            order = bybit.place_active_order(
+                                symbol="BTCUSDT",
+                                side="Sell",
+                                order_type="Market",
+                                qty=sell_size,
+                                time_in_force="GoodTillCancel"
+                            )
+                            if order and order['ret_code'] == 0:
+                                logger.info(f"Sell order executed successfully: {order}")
+                                order_executed = True
+                            else:
+                                logger.error(f"Sell order 실패: {order.get('ret_msg', 'No ret_msg')}")
+                        else:
+                            logger.warning("Sell Order Failed: Calculated sell size is zero.")
+                    else:
+                        logger.info("판매할 포지션이 없습니다.")
+                else:
+                    logger.error(f"포지션 조회 실패 또는 포지션 없음: {position.get('ret_msg', 'No ret_msg')}")
+            except Exception as e:
+                logger.error(f"Sell order 실행 중 오류: {e}")
+        elif decision.lower() == "hold":
+            logger.info("Decision is to hold. No action taken.")
+        else:
+            logger.error("AI로부터 유효하지 않은 결정이 전달되었습니다.")
+            return
+    except Exception as e:
+        logger.error(f"거래 실행 중 예상치 못한 오류 발생: {e}")
+    else:
+        logger.info("거래 실행 과정 완료.")
+    finally:
+        logger.debug("거래 실행 단계 종료.")
+
+    # 거래 실행 여부와 관계없이 현재 잔고 조회 및 기록
+    try:
+        time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
+        balance_data = get_account_balance()
+        if balance_data:
+            usdt_balance = balance_data['available_to_withdraw']
+            current_btc_price = get_current_price_bybit("BTCUSDT")
+
+            # 거래 기록을 DB에 저장하기
+            log_trade(
+                decision, 
+                percentage if order_executed else 0, 
+                reason, 
+                usdt_balance, 
+                current_btc_price, 
+                reflection
+            )
+    except Exception as e:
+        logger.error(f"잔고 조회 및 거래 기록 저장 중 오류 발생: {e}")
+    else:
+        logger.info("잔고 조회 및 거래 기록 저장 완료.")
+    finally:
+        logger.debug("잔고 조회 및 기록 단계 종료.")
+
+except Exception as e:
+    logger.critical(f"AI 트레이딩 로직 전체 중 예상치 못한 오류 발생: {e}")
+finally:
+    logger.info("AI 트레이딩 로직 종료.")
 
 # Scheduler setup
 def run_scheduler():
