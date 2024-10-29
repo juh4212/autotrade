@@ -1,10 +1,9 @@
 import os
 import time
 import logging
-import traceback
 import requests
 from pymongo import MongoClient
-from pybit import HTTP
+from pybit.usdt_perpetual import HTTP
 import openai
 import schedule
 from dotenv import load_dotenv
@@ -40,7 +39,7 @@ def setup_mongodb():
         logger.critical(f"MongoDB 연결 오류: {e}")
         raise
 
-# Bybit 클라이언트 설정
+# Bybit 선물 거래 클라이언트 설정
 def setup_bybit():
     try:
         api_key = os.getenv("BYBIT_API_KEY")
@@ -49,7 +48,7 @@ def setup_bybit():
             logger.critical("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
             raise ValueError("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
         bybit = HTTP("https://api.bybit.com", api_key=api_key, api_secret=api_secret)
-        logger.debug("Bybit API에 성공적으로 연결되었습니다.")
+        logger.debug("Bybit USDT Perpetual API에 성공적으로 연결되었습니다.")
         return bybit
     except Exception as e:
         logger.critical(f"Bybit API 연결 오류: {e}")
@@ -148,25 +147,17 @@ def ai_trading(trades_collection, bybit):
         fng = get_fear_and_greed_index()
         news_headlines = get_bitcoin_news()
         
-        balance_info = bybit.get_wallet_balance()
-        if balance_info and 'result' in balance_info:
-            balances = balance_info['result']
-            btc_balance, usdt_balance = 0, 0
-            btc_avg_buy_price = 0
-            for balance in balances:
-                if balance['coin'] == 'BTC':
-                    btc_balance = float(balance['wallet_balance'])
-                    btc_avg_buy_price = float(balance.get('avgPrice', 0))
-                elif balance['coin'] == 'USDT':
-                    usdt_balance = float(balance['wallet_balance'])
-        else:
-            logger.error("잔고 정보를 가져올 수 없습니다.")
-            return
+        # 잔고 조회
+        wallet_balance = bybit.get_wallet_balance()["result"]["USDT"]["wallet_balance"]
+        btc_position = bybit.get_positions(symbol="BTCUSDT")["result"][0]
+        btc_balance = btc_position["size"]
+        entry_price = btc_position["entry_price"]
+        logger.info(f"BTC 잔고: {btc_balance}, USDT 잔고: {wallet_balance}, 평균 매수가: {entry_price}")
 
         # OpenAI를 사용하여 AI 결정 생성
         decision = "hold"  # 기본 값
         try:
-            prompt = f"Fear and Greed Index: {fng}, BTC balance: {btc_balance}, USDT balance: {usdt_balance}"
+            prompt = f"Fear and Greed Index: {fng}, BTC balance: {btc_balance}, USDT balance: {wallet_balance}"
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[
@@ -180,14 +171,26 @@ def ai_trading(trades_collection, bybit):
         # 거래 수행
         percentage = 5
         if decision.lower() == "buy":
-            amount = (usdt_balance * (percentage / 100)) / btc_avg_buy_price
-            order = bybit.place_active_order("BTCUSDT", "Buy", "Market", qty=amount, time_in_force="GoodTillCancel")
-            log_trade(trades_collection, "BUY", percentage, "AI decision to buy", btc_balance, usdt_balance, btc_avg_buy_price, btc_avg_buy_price, "Buy order placed")
+            amount = (wallet_balance * (percentage / 100)) / entry_price
+            bybit.place_active_order(
+                symbol="BTCUSDT",
+                side="Buy",
+                order_type="Market",
+                qty=amount,
+                time_in_force="GoodTillCancel"
+            )
+            log_trade(trades_collection, "BUY", percentage, "AI decision to buy", btc_balance, wallet_balance, entry_price, entry_price, "Buy order placed")
 
         elif decision.lower() == "sell":
             amount = btc_balance * (percentage / 100)
-            order = bybit.place_active_order("BTCUSDT", "Sell", "Market", qty=amount, time_in_force="GoodTillCancel")
-            log_trade(trades_collection, "SELL", percentage, "AI decision to sell", btc_balance, usdt_balance, btc_avg_buy_price, btc_avg_buy_price, "Sell order placed")
+            bybit.place_active_order(
+                symbol="BTCUSDT",
+                side="Sell",
+                order_type="Market",
+                qty=amount,
+                time_in_force="GoodTillCancel"
+            )
+            log_trade(trades_collection, "SELL", percentage, "AI decision to sell", btc_balance, wallet_balance, entry_price, entry_price, "Sell order placed")
         
         logger.info(f"AI 결정: {decision}")
     except Exception as e:
