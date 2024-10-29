@@ -3,7 +3,7 @@ import time
 import logging
 import requests
 from pymongo import MongoClient
-from pybit.usdt_perpetual import HTTP
+from pybit import HTTP  # pybit v5에서는 HTTP 클라이언트로 통합됨
 import openai
 import schedule
 from dotenv import load_dotenv
@@ -48,7 +48,7 @@ def setup_bybit():
             logger.critical("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
             raise ValueError("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
         bybit = HTTP("https://api.bybit.com", api_key=api_key, api_secret=api_secret)
-        logger.debug("Bybit USDT Perpetual API에 성공적으로 연결되었습니다.")
+        logger.debug("Bybit API에 성공적으로 연결되었습니다.")
         return bybit
     except Exception as e:
         logger.critical(f"Bybit API 연결 오류: {e}")
