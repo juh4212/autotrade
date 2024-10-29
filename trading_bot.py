@@ -20,7 +20,10 @@ load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler()]
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("trading_bot.log")  # 로그를 파일로 저장
+    ]
 )
 logger = logging.getLogger(__name__)
 
