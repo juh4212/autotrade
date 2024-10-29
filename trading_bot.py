@@ -1,10 +1,12 @@
 import os
 import logging
 from pymongo import MongoClient
+from pybit.unified_trading import HTTP  # Bybit v5에 맞는 통합 API
 from dotenv import load_dotenv
 
 # 환경 변수 로드
 load_dotenv()
+print("환경 변수 로드 완료")  # 로드 여부 확인
 
 # 로깅 설정
 logging.basicConfig(
@@ -14,8 +16,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# MongoDB 설정 및 연결 테스트
+# MongoDB 설정 및 연결
 def setup_mongodb():
+    print("MongoDB 설정 시작")  # 설정 시작 여부 확인
     try:
         mongo_uri = os.getenv("MONGODB_URI")
         if not mongo_uri:
@@ -30,12 +33,9 @@ def setup_mongodb():
         logger.critical(f"MongoDB 연결 오류: {e}")
         raise
 
-if __name__ == "__main__":
-    # MongoDB 연결 테스트
-    setup_mongodb()
-
 # Bybit API 설정
 def setup_bybit():
+    print("Bybit API 설정 시작")  # 설정 시작 여부 확인
     try:
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
@@ -48,3 +48,8 @@ def setup_bybit():
     except Exception as e:
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
+
+if __name__ == "__main__":
+    # MongoDB와 Bybit 연결 테스트
+    setup_mongodb()
+    setup_bybit()
