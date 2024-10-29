@@ -553,7 +553,7 @@ def job():
         return
     try:
         trading_in_progress = True
-        ai_trading()
+        ai_trading()  # 트레이딩 로직을 실행
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
