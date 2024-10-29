@@ -56,30 +56,29 @@ def get_account_balance(bybit):
         wallet_balance = bybit.get_wallet_balance(accountType="CONTRACT")
         print("Bybit API 응답 데이터:", wallet_balance)  # 전체 응답 데이터 출력
         
-        if 'result' in wallet_balance and wallet_balance['result']:
-            # 응답 데이터에서 잔고 정보 추출
-            account_info = wallet_balance['result'][0]  # 첫 번째 계정 정보 가져오기
-            total_equity = account_info.get('totalEquity', 0)  # 전체 자산
-            total_available_balance = account_info.get('totalAvailableBalance', 0)  # 사용 가능한 자산
-            
-            # 모든 코인별 잔고 정보 추출
-            coin_balances = account_info.get('coin', [])
-            coin_data = {
-                coin['coin']: {
-                    'equity': coin.get('equity', 0),
-                    'walletBalance': coin.get('walletBalance', 0),
-                    'availableToWithdraw': coin.get('availableToWithdraw', 0)
-                } for coin in coin_balances
-            }
-            
-            logger.info(f"총 자산: {total_equity}, 사용 가능한 자산: {total_available_balance}")
-            logger.info("코인별 잔고 정보:", coin_data)
-            
-            return {
-                "total_equity": total_equity,
-                "total_available_balance": total_available_balance,
-                "coin_data": coin_data
-            }
+        if wallet_balance['retCode'] == 0 and 'result' in wallet_balance:
+            account_list = wallet_balance['result'].get('list', [])
+            if account_list:
+                account_info = account_list[0]  # 첫 번째 계정 정보 가져오기
+                coin_balances = account_info.get('coin', [])
+                
+                # USDT 잔고 정보 추출
+                usdt_balance = next((coin for coin in coin_balances if coin['coin'] == 'USDT'), None)
+                if usdt_balance:
+                    equity = float(usdt_balance.get('equity', 0))
+                    available_to_withdraw = float(usdt_balance.get('availableToWithdraw', 0))
+                    
+                    logger.info(f"USDT 전체 자산: {equity}, 사용 가능한 자산: {available_to_withdraw}")
+                    return {
+                        "equity": equity,
+                        "available_to_withdraw": available_to_withdraw
+                    }
+                else:
+                    logger.error("USDT 잔고 데이터를 찾을 수 없습니다.")
+                    return None
+            else:
+                logger.error("계정 리스트가 비어 있습니다.")
+                return None
         else:
             logger.error("잔고 데이터를 가져오지 못했습니다.")
             return None
