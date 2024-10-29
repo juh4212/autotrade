@@ -7,19 +7,20 @@ from pymongo import MongoClient
 from pybit import HTTP
 import openai
 import schedule
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+import pandas as pd
+import json
+import re
 
 # 환경 변수 로드
-from dotenv import load_dotenv
-
 load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG 레벨로 설정하여 상세 로그 기록
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler()  # 표준 출력으로 로그 전송 (Docker 로그로 캡처됨)
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,6 @@ def setup_mongodb():
         return trades_collection
     except Exception as e:
         logger.critical(f"MongoDB 연결 오류: {e}")
-        logger.debug(traceback.format_exc())
         raise
 
 # Bybit 클라이언트 설정
@@ -53,224 +53,162 @@ def setup_bybit():
         return bybit
     except Exception as e:
         logger.critical(f"Bybit API 연결 오류: {e}")
-        logger.debug(traceback.format_exc())
         raise
 
 # OpenAI 설정
 def setup_openai():
-    try:
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            logger.critical("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
-            raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
-        openai.api_key = openai_api_key
-        logger.debug("OpenAI API 설정 완료.")
-    except Exception as e:
-        logger.critical(f"OpenAI API 설정 오류: {e}")
-        logger.debug(traceback.format_exc())
-        raise
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        logger.critical("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
+        raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
+    openai.api_key = openai_api_key
+    logger.debug("OpenAI API 설정 완료.")
 
 # 거래 기록을 DB에 저장하기
-def log_trade(collection, decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, current_btc_price, reflection):
+def log_trade(collection, decision, percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, btc_usdt_price, reflection):
     try:
         trade = {
-            "timestamp": time.time(),
+            "timestamp": datetime.utcnow().isoformat(),
             "decision": decision,
             "percentage": percentage,
             "reason": reason,
             "btc_balance": btc_balance,
             "usdt_balance": usdt_balance,
             "btc_avg_buy_price": btc_avg_buy_price,
-            "btc_usdt_price": current_btc_price,
+            "btc_usdt_price": btc_usdt_price,
             "reflection": reflection
         }
         collection.insert_one(trade)
-        logger.debug("거래 기록이 MongoDB에 성공적으로 저장되었습니다.")
+        logger.info("거래 기록이 MongoDB에 성공적으로 저장되었습니다.")
     except Exception as e:
         logger.error(f"거래 기록 저장 오류: {e}")
-        logger.debug(traceback.format_exc())
+
+# 최근 거래 기록을 조회하는 함수
+def get_recent_trades(collection, days=7):
+    seven_days_ago = datetime.utcnow() - timedelta(days=days)
+    try:
+        trades = list(collection.find({"timestamp": {"$gt": seven_days_ago.isoformat()}}).sort("timestamp", -1))
+        if not trades:
+            logger.info("최근 거래 기록이 없습니다.")
+            return pd.DataFrame()
+        return pd.DataFrame(trades)
+    except Exception as e:
+        logger.error(f"최근 거래 기록 조회 오류: {e}")
+        return pd.DataFrame()
 
 # Fear and Greed Index 가져오기
 def get_fear_and_greed_index():
     try:
-        logger.debug("Fear and Greed Index 가져오기 시작...")
         response = requests.get("https://api.alternative.me/fng/?limit=1")
-        response.raise_for_status()  # HTTP 오류 발생 시 예외 발생
         data = response.json()
         value = data['data'][0]['value']
-        logger.debug(f"Fear and Greed Index: {value}")
+        logger.info(f"Fear and Greed Index: {value}")
         return value
     except requests.RequestException as e:
         logger.error(f"Fear and Greed Index 가져오기 오류: {e}")
-        logger.debug(traceback.format_exc())
         return None
-    finally:
-        logger.debug("get_fear_and_greed_index 함수 실행 완료.")
 
 # Bitcoin 뉴스 가져오기
 def get_bitcoin_news():
     try:
-        logger.debug("Bitcoin 뉴스 가져오기 시작...")
         news_api_key = os.getenv("NEWS_API_KEY")
         if not news_api_key:
             logger.error("NEWS_API_KEY 환경 변수가 설정되지 않았습니다.")
             return []
         url = f"https://newsapi.org/v2/everything?q=bitcoin&sortBy=publishedAt&apiKey={news_api_key}"
         response = requests.get(url)
-        response.raise_for_status()
         articles = response.json().get('articles', [])
         headlines = [article['title'] for article in articles]
-        logger.debug(f"{len(headlines)}개의 뉴스 헤드라인을 가져왔습니다.")
+        logger.info(f"{len(headlines)}개의 뉴스 헤드라인을 가져왔습니다.")
         return headlines
     except requests.RequestException as e:
         logger.error(f"Bitcoin 뉴스 가져오기 오류: {e}")
-        logger.debug(traceback.format_exc())
         return []
-    finally:
-        logger.debug("get_bitcoin_news 함수 실행 완료.")
 
-# AI를 사용한 트레이딩 결정
-def ai_trading(collection, bybit):
+# AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
+def generate_reflection(trades_df, current_market_data):
+    performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
+
     try:
-        logger.debug("AI 트레이딩 결정 시작...")
-        # Fear and Greed Index 가져오기
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."},
+                {"role": "user", "content": f"Recent trading data: {trades_df.to_json(orient='records')}\n\nCurrent market data: {current_market_data}\n\nOverall performance in the last 7 days: {performance:.2f}%"}
+            ]
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        logger.error(f"OpenAI reflection 생성 오류: {e}")
+        return None
+
+# AI 트레이딩 로직
+def ai_trading(trades_collection, bybit):
+    try:
         fng = get_fear_and_greed_index()
-        
-        # Bitcoin 뉴스 가져오기
         news_headlines = get_bitcoin_news()
         
-        # 현재 잔고 조회
         balance_info = bybit.get_wallet_balance()
         if balance_info and 'result' in balance_info:
             balances = balance_info['result']
-            btc_balance = 0
-            usdt_balance = 0
+            btc_balance, usdt_balance = 0, 0
             btc_avg_buy_price = 0
             for balance in balances:
                 if balance['coin'] == 'BTC':
                     btc_balance = float(balance['wallet_balance'])
                     btc_avg_buy_price = float(balance.get('avgPrice', 0))
-                    logger.debug(f"BTC 잔고: {btc_balance}, 평균 매수가: {btc_avg_buy_price}")
                 elif balance['coin'] == 'USDT':
                     usdt_balance = float(balance['wallet_balance'])
-                    logger.debug(f"USDT 잔고: {usdt_balance}")
-            logger.debug(f"현재 BTC 잔고: {btc_balance}, USDT 잔고: {usdt_balance}")
         else:
             logger.error("잔고 정보를 가져올 수 없습니다.")
             return
-        
-        # 현재 BTC 가격 조회
-        btc_price_info = bybit.latest_information_for_symbol(symbol="BTCUSDT")
-        if btc_price_info and 'result' in btc_price_info:
-            current_btc_price = float(btc_price_info['result'][0]['last_price'])
-            logger.debug(f"현재 BTC 가격: {current_btc_price} USDT")
-        else:
-            logger.error("현재 BTC 가격을 가져올 수 없습니다.")
-            return
-        
-        # OpenAI를 사용하여 트레이딩 결정 생성
-        prompt = (
-            f"현재 BTC 잔고는 {btc_balance} BTC이고, USDT 잔고는 {usdt_balance} USDT입니다.\n"
-            f"평균 매수가: {btc_avg_buy_price} USDT\n"
-            f"현재 BTC 가격: {current_btc_price} USDT\n"
-            f"Fear and Greed Index: {fng}\n"
-            f"Bitcoin 뉴스 헤드라인: {news_headlines}\n"
-            f"위 정보를 바탕으로 'buy', 'sell', 'hold' 중 하나의 결정을 내려주세요."
-        )
-        
+
+        # OpenAI를 사용하여 AI 결정 생성
+        decision = "hold"  # 기본 값
         try:
+            prompt = f"Fear and Greed Index: {fng}, BTC balance: {btc_balance}, USDT balance: {usdt_balance}"
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a helpful trading assistant."},
                     {"role": "user", "content": prompt}
-                ],
-                max_tokens=10,
-                n=1,
-                stop=None,
-                temperature=0.5,
+                ]
             )
-            decision = response.choices[0].message['content'].strip()
-            logger.debug(f"AI Decision: {decision}")
+            decision = response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"AI 응답 생성 오류: {e}")
-            logger.debug(traceback.format_exc())
-            return
-        
-        # 거래 결정에 따른 행동 수행
-        if decision.lower() == "buy":
-            percentage = 5  # 예시로 5% 매수
-            amount = (usdt_balance * (percentage / 100)) / current_btc_price
-            try:
-                buy_order = bybit.place_active_order(
-                    symbol="BTCUSDT",
-                    side="Buy",
-                    order_type="Market",
-                    qty=amount,
-                    time_in_force="GoodTillCancel"
-                )
-                logger.info(f"Buy order executed: {buy_order}")
-                reason = "AI decision to buy based on market analysis."
-                reflection = "Successfully executed buy order."
-                log_trade(collection, "BUY", percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, current_btc_price, reflection)
-            except Exception as e:
-                logger.error(f"Buy order 실행 오류: {e}")
-                logger.debug(traceback.format_exc())
-        
-        elif decision.lower() == "sell":
-            percentage = 5  # 예시로 5% 매도
-            amount = btc_balance * (percentage / 100)
-            if amount > 0:
-                try:
-                    sell_order = bybit.place_active_order(
-                        symbol="BTCUSDT",
-                        side="Sell",
-                        order_type="Market",
-                        qty=amount,
-                        time_in_force="GoodTillCancel"
-                    )
-                    logger.info(f"Sell order executed: {sell_order}")
-                    reason = "AI decision to sell based on market analysis."
-                    reflection = "Successfully executed sell order."
-                    log_trade(collection, "SELL", percentage, reason, btc_balance, usdt_balance, btc_avg_buy_price, current_btc_price, reflection)
-                except Exception as e:
-                    logger.error(f"Sell order 실행 오류: {e}")
-                    logger.debug(traceback.format_exc())
-            else:
-                logger.warning("매도할 BTC 잔고가 부족합니다.")
-        
-        elif decision.lower() == "hold":
-            logger.info("Hold 결정: 현재 포지션을 유지합니다.")
-            reason = "AI decision to hold based on market analysis."
-            reflection = "No action taken; holding current position."
-            log_trade(collection, "HOLD", 0, reason, btc_balance, usdt_balance, btc_avg_buy_price, current_btc_price, reflection)
-        
-        else:
-            logger.error(f"유효하지 않은 결정: {decision}")
-    
-    # 트레이딩 봇 주기적 실행 함수
-    def run_trading_bot(trades_collection, bybit):
-        try:
-            ai_trading(trades_collection, bybit)
-        except Exception as e:
-            logger.error(f"트레이딩 봇 실행 오류: {e}")
-            logger.debug(traceback.format_exc())
+            logger.error(f"AI 결정 생성 오류: {e}")
 
-    if __name__ == "__main__":
-        try:
-            # 설정 초기화
-            trades_collection = setup_mongodb()
-            bybit = setup_bybit()
-            setup_openai()
-            
-            # 트레이딩 봇 스케줄링 (예: 매 4시간마다 실행)
-            schedule.every(4).hours.do(run_trading_bot, trades_collection, bybit)
-            logger.info("트레이딩 봇 스케줄러 시작: 매 4시간마다 실행됩니다.")
-            
-            while True:
-                schedule.run_pending()
-                time.sleep(1)
-        except Exception as e:
-            logger.critical(f"트레이딩 봇 초기화 실패: {e}")
-            logger.debug(traceback.format_exc())
-            exit(1)
+        # 거래 수행
+        percentage = 5
+        if decision.lower() == "buy":
+            amount = (usdt_balance * (percentage / 100)) / btc_avg_buy_price
+            order = bybit.place_active_order("BTCUSDT", "Buy", "Market", qty=amount, time_in_force="GoodTillCancel")
+            log_trade(trades_collection, "BUY", percentage, "AI decision to buy", btc_balance, usdt_balance, btc_avg_buy_price, btc_avg_buy_price, "Buy order placed")
+
+        elif decision.lower() == "sell":
+            amount = btc_balance * (percentage / 100)
+            order = bybit.place_active_order("BTCUSDT", "Sell", "Market", qty=amount, time_in_force="GoodTillCancel")
+            log_trade(trades_collection, "SELL", percentage, "AI decision to sell", btc_balance, usdt_balance, btc_avg_buy_price, btc_avg_buy_price, "Sell order placed")
+        
+        logger.info(f"AI 결정: {decision}")
+    except Exception as e:
+        logger.error(f"트레이딩 실행 오류: {e}")
+
+# 주기적으로 트레이딩을 실행하는 함수
+def run_trading_bot():
+    try:
+        trades_collection = setup_mongodb()
+        bybit = setup_bybit()
+        setup_openai()
+
+        schedule.every(4).hours.do(ai_trading, trades_collection, bybit)
+        logger.info("트레이딩 봇 스케줄러 시작: 매 4시간마다 실행됩니다.")
+
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+    except Exception as e:
+        logger.critical(f"트레이딩 봇 초기화 실패: {e}")
+        exit(1)
+
+if __name__ == "__main__":
+    run_trading_bot()
