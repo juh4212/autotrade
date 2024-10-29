@@ -1,10 +1,12 @@
 import os
 import logging
+import json
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP  # Bybit v5 API를 사용 중임을 가정
 import pandas as pd
+import ta
 import openai
 
 # 환경 변수 로드
@@ -201,54 +203,213 @@ Limit your response to 250 words or less.
         logger.error(f"반성 생성 오류: {e}")
         return None
 
-if __name__ == "__main__":
-    # MongoDB와 Bybit 연결 설정
-    trades_collection = setup_mongodb()
-    bybit = setup_bybit()
+# 데이터프레임에 보조 지표를 추가하는 함수
+def add_indicators(df):
+    # 볼린저 밴드 추가
+    indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
+    df['bb_bbm'] = indicator_bb.bollinger_mavg()
+    df['bb_bbh'] = indicator_bb.bollinger_hband()
+    df['bb_bbl'] = indicator_bb.bollinger_lband()
+    
+    # RSI (Relative Strength Index) 추가
+    df['rsi'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+    
+    # MACD (Moving Average Convergence Divergence) 추가
+    macd = ta.trend.MACD(close=df['close'])
+    df['macd'] = macd.macd()
+    df['macd_signal'] = macd.macd_signal()
+    df['macd_diff'] = macd.macd_diff()
+    
+    # 이동평균선 (단기, 장기)
+    df['sma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
+    df['ema_12'] = ta.trend.EMAIndicator(close=df['close'], window=12).ema_indicator()
 
-    # Bybit API를 사용하여 계좌 잔고 가져오기
-    balance_data = get_account_balance(bybit)
-    if balance_data:
-        # MongoDB에 잔고 기록
-        log_balance_to_mongodb(trades_collection, balance_data)
+    # Stochastic Oscillator 추가
+    stoch = ta.momentum.StochasticOscillator(
+        high=df['high'], low=df['low'], close=df['close'], window=14, smooth_window=3)
+    df['stoch_k'] = stoch.stoch()
+    df['stoch_d'] = stoch.stoch_signal()
 
-    # 예시: 거래 기록 추가 (실제 거래 로직에 맞게 수정 필요)
-    # decision, percentage, reason 등의 값은 실제 로직에 따라 설정
-    # 여기서는 예시로 값을 넣었습니다.
-    decision = "BUY"
-    percentage = 10
-    reason = "Market dip observed"
-    btc_balance = 0.5
-    krw_balance = 1000000  # 예시 금액
-    btc_avg_buy_price = 50000
-    btc_krw_price = 55000
-    reflection = ""  # 나중에 AI가 채울 부분
+    # Average True Range (ATR) 추가
+    df['atr'] = ta.volatility.AverageTrueRange(
+        high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
 
-    # 거래 기록 저장
-    log_trade(trades_collection, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection)
+    # On-Balance Volume (OBV) 추가
+    df['obv'] = ta.volume.OnBalanceVolumeIndicator(
+        close=df['close'], volume=df['volume']).on_balance_volume()
 
-    # 최근 거래 기록 조회
-    recent_trades_df = get_recent_trades(trades_collection, days=7)
+    return df
 
-    if not recent_trades_df.empty:
-        # 현재 시장 데이터 예시 (실제 데이터로 대체 필요)
-        current_market_data = {
-            "BTC_USD": 56000,
-            "market_trend": "uptrend",
-            "volume": 1200
+# 메인 AI 트레이딩 로직
+def ai_trading(bybit, collection):
+    try:
+        # 1. 현재 투자 상태 조회
+        wallet_balance = get_account_balance(bybit)
+        if not wallet_balance:
+            logger.error("잔고 조회 실패로 인해 AI 트레이딩을 중단합니다.")
+            return
+
+        filtered_balances = {
+            "USDT": wallet_balance['equity'],
+            "Available_USDT": wallet_balance['available_to_withdraw']
         }
 
-        # AI를 사용하여 반성 생성
-        reflection_text = generate_reflection(recent_trades_df, current_market_data)
-        if reflection_text:
-            # 최신 거래에 반성 추가
-            latest_trade = recent_trades_df.iloc[0]
-            trade_id = latest_trade['_id']
-            try:
-                trades_collection.update_one(
-                    {"_id": trade_id},
-                    {"$set": {"reflection": reflection_text}}
-                )
-                logger.info("AI 반성이 최신 거래에 성공적으로 추가되었습니다.")
-            except Exception as e:
-                logger.error(f"AI 반성을 거래에 추가하는 중 오류 발생: {e}")
+        # 2. 오더북(호가 데이터) 조회
+        orderbook = bybit.get_orderbook(symbol="BTCUSDT")
+        logger.info("오더북 데이터 가져오기 완료.")
+
+        # 3. 차트 데이터 조회 및 보조지표 추가
+        # Bybit에서는 Kline 데이터를 가져와야 합니다. 예를 들어, 1일 및 1시간 간격
+        klines_daily = bybit.get_kline(symbol="BTCUSDT", interval="D", limit=180)
+        klines_hourly = bybit.get_kline(symbol="BTCUSDT", interval="60", limit=168)
+
+        # 데이터프레임으로 변환
+        df_daily = pd.DataFrame(klines_daily['result'])
+        df_daily.rename(columns={
+            'open_time': 'timestamp',
+            'open': 'open',
+            'high': 'high',
+            'low': 'low',
+            'close': 'close',
+            'volume': 'volume',
+            'turnover': 'turnover'
+        }, inplace=True)
+        df_daily['timestamp'] = pd.to_datetime(df_daily['timestamp'], unit='s')
+        df_daily.set_index('timestamp', inplace=True)
+
+        df_hourly = pd.DataFrame(klines_hourly['result'])
+        df_hourly.rename(columns={
+            'open_time': 'timestamp',
+            'open': 'open',
+            'high': 'high',
+            'low': 'low',
+            'close': 'close',
+            'volume': 'volume',
+            'turnover': 'turnover'
+        }, inplace=True)
+        df_hourly['timestamp'] = pd.to_datetime(df_hourly['timestamp'], unit='s')
+        df_hourly.set_index('timestamp', inplace=True)
+
+        # 보조 지표 추가
+        df_daily = add_indicators(df_daily)
+        df_hourly = add_indicators(df_hourly)
+
+        # 최근 데이터만 사용하도록 설정 (메모리 절약)
+        df_daily_recent = df_daily.tail(60)
+        df_hourly_recent = df_hourly.tail(48)
+
+        # 최근 거래 기록 조회
+        recent_trades_df = get_recent_trades(collection, days=7)
+
+        # 현재 시장 데이터 수집 (뉴스와 공포 지표는 제외)
+        current_market_data = {
+            "orderbook": orderbook,
+            "daily_ohlcv": df_daily_recent.to_dict(orient='records'),
+            "hourly_ohlcv": df_hourly_recent.to_dict(orient='records')
+        }
+
+        # 반성 및 개선 내용 생성
+        reflection = generate_reflection(recent_trades_df, current_market_data)
+
+        # AI에게 데이터 제공하고 판단 받기
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        if not openai.api_key:
+            logger.error("OpenAI API key가 누락되었거나 유효하지 않습니다.")
+            return
+
+        # Few-shot prompting으로 JSON 예시 추가
+        examples = """
+Example Response 1:
+{
+  "decision": "buy",
+  "percentage": 50,
+  "reason": "Based on the current market indicators and positive trends, it's a good opportunity to invest."
+}
+
+Example Response 2:
+{
+  "decision": "sell",
+  "percentage": 30,
+  "reason": "Due to negative trends in the market and declining indicators, it is advisable to reduce holdings."
+}
+
+Example Response 3:
+{
+  "decision": "hold",
+  "percentage": 0,
+  "reason": "Market indicators are neutral; it's best to wait for a clearer signal."
+}
+"""
+
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:\n\n- Technical indicators and market data\n- Overall market sentiment\n- Recent trading performance and reflection\n\nRecent trading reflection:\n" + reflection
+                },
+                {
+                    "role": "user",
+                    "content": f"""Based on the following data, make a decision to buy, sell, or hold Bitcoin. Provide your response in the following JSON format:
+
+{examples}
+
+Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions. Your percentage should reflect the strength of your conviction in the decision based on the analyzed data.
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""Current investment status: {json.dumps(filtered_balances)}
+Orderbook: {json.dumps(orderbook)}
+Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json(orient='records')}
+Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient='records')}
+"""
+                }
+            ],
+            max_tokens=500,
+            n=1,
+            stop=None,
+            temperature=0.7,
+        )
+
+        response_text = response.choices[0].message.content.strip()
+        logger.info("AI 의사결정 생성 완료.")
+        logger.info("AI 응답: %s", response_text)
+
+        # JSON 형식으로 파싱
+        try:
+            decision_data = json.loads(response_text)
+            decision = decision_data.get("decision")
+            percentage = decision_data.get("percentage")
+            reason = decision_data.get("reason", "")
+
+            if decision not in ["buy", "sell", "hold"]:
+                logger.error("AI의 결정이 유효하지 않습니다.")
+                return
+
+            # 현재 잔고 정보 가져오기
+            btc_balance = float(wallet_balance.get('btc_balance', 0))  # 실제 필드 이름에 맞게 조정
+            krw_balance = float(wallet_balance.get('krw_balance', 0))  # 실제 필드 이름에 맞게 조정
+            btc_avg_buy_price = float(wallet_balance.get('btc_avg_buy_price', 0))  # 실제 필드 이름에 맞게 조정
+            btc_krw_price = float(wallet_balance.get('btc_krw_price', 0))  # 실제 필드 이름에 맞게 조정
+
+            # 거래 기록 저장
+            log_trade(collection, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection)
+
+        except json.JSONDecodeError as e:
+            logger.error(f"AI 응답 JSON 파싱 오류: {e}")
+        except Exception as e:
+            logger.error(f"AI 응답 처리 오류: {e}")
+
+    if __name__ == "__main__":
+        # MongoDB와 Bybit 연결 설정
+        trades_collection = setup_mongodb()
+        bybit = setup_bybit()
+
+        # 계좌 잔고 가져오기 및 기록
+        balance_data = get_account_balance(bybit)
+        if balance_data:
+            log_balance_to_mongodb(trades_collection, balance_data)
+
+        # AI 트레이딩 로직 실행
+        ai_trading(bybit, trades_collection)
