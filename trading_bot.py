@@ -27,6 +27,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 글로벌 변수 설정
+trading_in_progress = False
+
 # MongoDB 설정 및 연결
 def setup_mongodb():
     mongo_uri = os.getenv("MONGODB_URI")
@@ -512,7 +515,7 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
         else:
             logger.error("Invalid decision received from AI.")
             return
-    
+
         # 거래 실행 여부와 관계없이 현재 잔고 조회
         try:
             time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
@@ -521,7 +524,7 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
                 usdt_balance = balance_data['available_to_withdraw']
                 # 현재 BTC 가격 조회
                 current_btc_price = get_current_price_bybit(bybit, "BTCUSDT")
-    
+
                 # 거래 기록을 DB에 저장하기
                 log_trade(
                     trades_collection, 
@@ -549,7 +552,7 @@ def job(trades_collection, bybit):
     finally:
         trading_in_progress = False
 
-# 초기 설정 및 스케줄링 실행
+# 스크립트 시작 시 초기 설정 및 스케줄링 실행
 def main():
     try:
         # MongoDB와 Bybit 연결 설정
@@ -565,6 +568,15 @@ def main():
         schedule.every(4).hours.do(job, trades_collection, bybit)
         logger.info("트레이딩 봇 스케줄러 설정 완료: 매 4시간마다 실행됩니다.")
 
+        # 또는 특정 시간에 실행하도록 설정 (사용자가 시도한 방법)
+        # schedule.every().day.at("00:00").do(job, trades_collection, bybit)
+        # schedule.every().day.at("04:00").do(job, trades_collection, bybit)
+        # schedule.every().day.at("08:00").do(job, trades_collection, bybit)
+        # schedule.every().day.at("12:00").do(job, trades_collection, bybit)
+        # schedule.every().day.at("16:00").do(job, trades_collection, bybit)
+        # schedule.every().day.at("20:00").do(job, trades_collection, bybit)
+
+        # 무한 루프를 통해 스케줄된 작업 실행
         while True:
             schedule.run_pending()
             time.sleep(1)
