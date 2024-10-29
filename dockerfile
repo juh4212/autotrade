@@ -1,7 +1,7 @@
-# Dockerfile.streamlit
+# trading_bot/Dockerfile
 
-# 베이스 이미지로 Python 3.13 슬림 버전 사용
-FROM python:3.13-slim
+# 베이스 이미지로 Python 3.11 슬림 버전 사용
+FROM python:3.11-slim
 
 # 환경 변수 설정
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -19,11 +19,11 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --upgrade pip
 
 # 의존성 파일 복사 및 패키지 설치
-COPY requirements.txt .
+COPY ../requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 나머지 애플리케이션 코드 복사
-COPY streamlit_app.py .
+COPY trading_bot.py .
 
-# Streamlit 애플리케이션 실행
-CMD ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# 트레이딩 봇 실행
+CMD ["python", "trading_bot.py"]
