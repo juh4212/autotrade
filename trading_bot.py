@@ -49,7 +49,7 @@ def setup_bybit():
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
 
-# Bybit 계좌 잔고 조회 (전체 응답 출력)
+# Bybit 계좌 잔고 조회 (UNIFIED 계좌로 조회)
 def get_account_balance(bybit):
     try:
         # UNIFIED 계좌 유형의 전체 잔고 확인
