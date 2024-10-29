@@ -546,24 +546,27 @@ Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json(orient
         except Exception as e:
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
 
-# 중복 실행 방지를 위한 변수 설정
-job_lock = threading.Lock()
+# 중복 실행 방지를 위한 플래그 변수 설정
+trading_in_progress = False
 
 # 트레이딩 작업을 수행하는 함수
 def job():
-    if job_lock.locked():
+    global trading_in_progress
+
+    if trading_in_progress:
         logger.warning("Trading job is already in progress, skipping this run.")
         return
 
-    if job_lock.acquire(blocking=False):  # 락을 비차단 모드로 획득 시도
-        logger.info("Trading job started.")
-        try:
-            ai_trading()  # 실제 트레이딩 로직 실행
-            logger.info("Trading job completed successfully.")
-        finally:
-            job_lock.release()  # 작업이 완료되면 락을 해제
-    else:
-        logger.warning("Unable to acquire job lock, skipping job.")
+    # 중복 실행 방지 플래그 설정
+    trading_in_progress = True
+    logger.info("Trading job started.")
+
+    # 트레이딩 로직 실행
+    ai_trading()  # 실제 트레이딩 로직 실행
+
+    # 작업 완료 후 플래그 해제
+    trading_in_progress = False
+    logger.info("Trading job completed successfully.")
 
 # 스케줄링 설정과 무한 루프 실행
 def schedule_trading():
@@ -580,3 +583,4 @@ def schedule_trading():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
