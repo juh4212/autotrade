@@ -1,12 +1,12 @@
 import os
 import logging
+from datetime import datetime
 from pymongo import MongoClient
 from pybit.unified_trading import HTTP  # Bybit v5에 맞는 통합 API
 from dotenv import load_dotenv
 
 # 환경 변수 로드
 load_dotenv()
-print("환경 변수 로드 완료")  # 로드 여부 확인
 
 # 로깅 설정
 logging.basicConfig(
@@ -49,7 +49,42 @@ def setup_bybit():
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
 
+# MongoDB에 계좌 잔고 기록
+def log_balance_to_mongodb(collection, balance_data):
+    balance_record = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "balance_data": balance_data
+    }
+    try:
+        collection.insert_one(balance_record)
+        logger.info("계좌 잔고가 MongoDB에 성공적으로 저장되었습니다.")
+    except Exception as e:
+        logger.error(f"MongoDB에 계좌 잔고 저장 오류: {e}")
+
+# Bybit 계좌 잔고 조회
+def get_account_balance(bybit):
+    try:
+        # 계좌 잔고 가져오기 (예: 선물 계좌)
+        wallet_balance = bybit.get_wallet_balance(account_type="CONTRACT")  # USDT 선물 잔고 확인
+        if 'result' in wallet_balance:
+            usdt_balance = wallet_balance['result'].get('USDT', {}).get('wallet_balance', 0)
+            btc_balance = wallet_balance['result'].get('BTC', {}).get('wallet_balance', 0)
+            logger.info(f"USDT 잔고: {usdt_balance}, BTC 잔고: {btc_balance}")
+            return {"USDT": usdt_balance, "BTC": btc_balance}
+        else:
+            logger.error("잔고 데이터를 가져오지 못했습니다.")
+            return None
+    except Exception as e:
+        logger.error(f"Bybit 잔고 조회 오류: {e}")
+        return None
+
 if __name__ == "__main__":
-    # MongoDB와 Bybit 연결 테스트
-    setup_mongodb()
-    setup_bybit()
+    # MongoDB와 Bybit 연결 설정
+    trades_collection = setup_mongodb()
+    bybit = setup_bybit()
+
+    # Bybit API를 사용하여 계좌 잔고 가져오기
+    balance_data = get_account_balance(bybit)
+    if balance_data:
+        # MongoDB에 잔고 기록
+        log_balance_to_mongodb(trades_collection, balance_data)
