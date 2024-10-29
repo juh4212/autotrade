@@ -52,7 +52,7 @@ def setup_bybit():
 # Bybit 계좌 잔고 조회 (전체 응답 출력)
 def get_account_balance(bybit):
     try:
-        # 선물 계좌 잔고 확인 (전체 응답 출력)
+        # 선물 계좌 잔고 확인 (account_type 파라미터 제거)
         wallet_balance = bybit.get_wallet_balance(coin="USDT")
         print("Bybit API 응답 데이터:", wallet_balance)  # 전체 응답 데이터 출력
         
