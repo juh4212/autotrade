@@ -1,9 +1,9 @@
 import os
 import logging
-from datetime import datetime
 from pymongo import MongoClient
-from pybit.unified_trading import HTTP  # Bybit v5에 맞는 통합 API
 from dotenv import load_dotenv
+from datetime import datetime
+from pybit.unified_trading import HTTP  # Bybit v5 API를 사용 중임을 가정
 
 # 환경 변수 로드
 load_dotenv()
@@ -18,12 +18,9 @@ logger = logging.getLogger(__name__)
 
 # MongoDB 설정 및 연결
 def setup_mongodb():
-    print("MongoDB 설정 시작")  # 설정 시작 여부 확인
+    mongo_uri = os.getenv("MONGODB_URI")
+    print("MongoDB URI:", mongo_uri)  # URI 확인을 위해 출력
     try:
-        mongo_uri = os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            logger.critical("MONGODB_URI 환경 변수가 설정되지 않았습니다.")
-            raise ValueError("MONGODB_URI 환경 변수가 설정되지 않았습니다.")
         client = MongoClient(mongo_uri)
         db = client['bitcoin_trades_db']
         trades_collection = db['trades']
@@ -35,13 +32,12 @@ def setup_mongodb():
 
 # Bybit API 설정
 def setup_bybit():
-    print("Bybit API 설정 시작")  # 설정 시작 여부 확인
     try:
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
         if not api_key or not api_secret:
-            logger.critical("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
-            raise ValueError("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
+            logger.critical("Bybit API 키가 설정되지 않았습니다.")
+            raise ValueError("Bybit API 키가 누락되었습니다.")
         bybit = HTTP(api_key=api_key, api_secret=api_secret)
         logger.info("Bybit API 연결 완료!")
         return bybit
@@ -49,25 +45,21 @@ def setup_bybit():
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
 
-# Bybit 선물 계좌 잔고 조회
+# Bybit 계좌 잔고 조회
 def get_account_balance(bybit):
     try:
-        # CONTRACT 계좌 유형의 전체 잔고 확인
         wallet_balance = bybit.get_wallet_balance(accountType="CONTRACT")
-        print("Bybit API 응답 데이터:", wallet_balance)  # 전체 응답 데이터 출력
-        
+        logger.info("Bybit API 응답 데이터: %s", wallet_balance)  # 전체 응답 데이터 출력
         if wallet_balance['retCode'] == 0 and 'result' in wallet_balance:
             account_list = wallet_balance['result'].get('list', [])
             if account_list:
-                account_info = account_list[0]  # 첫 번째 계정 정보 가져오기
+                account_info = account_list[0]
                 coin_balances = account_info.get('coin', [])
                 
-                # USDT 잔고 정보 추출
                 usdt_balance = next((coin for coin in coin_balances if coin['coin'] == 'USDT'), None)
                 if usdt_balance:
                     equity = float(usdt_balance.get('equity', 0))
                     available_to_withdraw = float(usdt_balance.get('availableToWithdraw', 0))
-                    
                     logger.info(f"USDT 전체 자산: {equity}, 사용 가능한 자산: {available_to_withdraw}")
                     return {
                         "equity": equity,
