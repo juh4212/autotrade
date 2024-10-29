@@ -265,6 +265,19 @@ def get_bitcoin_news():
         logger.error(f"Error fetching news: {e}")
         return []
 
+# 현재 가격 조회 함수 (Bybit)
+def get_current_price_bybit(bybit, symbol):
+    try:
+        ticker = bybit.query_public("v5/market/ticker", {"symbol": symbol})
+        if ticker['ret_code'] == 0:
+            return float(ticker['result']['list'][0]['last_price'])
+        else:
+            logger.error(f"가격 조회 실패: {ticker.get('ret_msg', 'No ret_msg')}")
+            return 0
+    except Exception as e:
+        logger.error(f"가격 조회 오류: {e}")
+        return 0
+
 # AI 트레이딩 로직
 def ai_trading(trades_collection, bybit):
     ### 데이터 가져오기
@@ -487,9 +500,11 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                 logger.error(f"Error executing buy order: {e}")
         elif decision.lower() == "sell":
             try:
-                btc_balance = balance_data.get('equity', 0)  # Bybit에서 'equity'가 BTC 잔고에 해당
+                # Bybit에서는 USDT 잔고가 없으므로, BTC 잔고를 사용
+                btc_balance = balance_data.get('equity', 0)  # Bybit의 'equity'가 BTC 잔고에 해당
                 sell_amount = btc_balance * (percentage / 100)
-                if sell_amount * get_current_price_bybit("BTCUSDT") > 5:  # 최소 주문 금액
+                current_price = get_current_price_bybit(bybit, "BTCUSDT")
+                if sell_amount * current_price > 5:  # 최소 주문 금액
                     logger.info(f"Sell Order Executed: {percentage}% of held BTC")
                     order = bybit.place_active_order(
                         symbol="BTCUSDT",
@@ -520,7 +535,8 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
             if balance_data:
                 usdt_balance = balance_data['available_to_withdraw']
                 # 현재 BTC 가격 조회
-                current_btc_price = get_current_price_bybit("BTCUSDT")
+                current_btc_price = get_current_price_bybit(bybit, "BTCUSDT")
+    
                 # 거래 기록을 DB에 저장하기
                 log_trade(
                     trades_collection, 
@@ -535,19 +551,6 @@ Fear and Greed Index: {json.dumps(fear_greed_index)}
                 )
         except Exception as e:
             logger.error(f"잔고 조회 및 거래 기록 저장 오류: {e}")
-
-# 현재 가격 조회 함수 (Bybit)
-def get_current_price_bybit(symbol):
-    try:
-        ticker = bybit.query_public("v5/market/ticker", {"symbol": symbol})
-        if ticker['ret_code'] == 0:
-            return float(ticker['result']['list'][0]['last_price'])
-        else:
-            logger.error(f"가격 조회 실패: {ticker.get('ret_msg', 'No ret_msg')}")
-            return 0
-    except Exception as e:
-        logger.error(f"가격 조회 오류: {e}")
-        return 0
 
 # 데이터프레임에서 결측치 제거 함수
 def dropna(df):
