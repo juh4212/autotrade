@@ -49,7 +49,24 @@ def setup_bybit():
         logger.critical(f"Bybit API 연결 오류: {e}")
         raise
 
-# MongoDB에 계좌 잔고 기록
+# Bybit 계좌 잔고 조회 (전체 잔고 및 사용 가능한 잔고 표시)
+def get_account_balance(bybit):
+    try:
+        # 선물 계좌 잔고 확인
+        wallet_balance = bybit.get_wallet_balance(coin="USDT")
+        if 'result' in wallet_balance and wallet_balance['result']:
+            usdt_total = wallet_balance['result']['USDT']['equity']      # 총 잔고
+            usdt_available = wallet_balance['result']['USDT']['available_balance']  # 사용 가능한 잔고
+            logger.info(f"USDT 총 잔고: {usdt_total}, 사용 가능한 잔고: {usdt_available}")
+            return {"USDT_total": usdt_total, "USDT_available": usdt_available}
+        else:
+            logger.error("잔고 데이터를 가져오지 못했습니다.")
+            return None
+    except Exception as e:
+        logger.error(f"Bybit 잔고 조회 오류: {e}")
+        return None
+
+# MongoDB에 잔고 기록
 def log_balance_to_mongodb(collection, balance_data):
     balance_record = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -60,23 +77,6 @@ def log_balance_to_mongodb(collection, balance_data):
         logger.info("계좌 잔고가 MongoDB에 성공적으로 저장되었습니다.")
     except Exception as e:
         logger.error(f"MongoDB에 계좌 잔고 저장 오류: {e}")
-
-# Bybit 계좌 잔고 조회
-def get_account_balance(bybit):
-    try:
-        # 계좌 잔고 가져오기 (예: 선물 계좌)
-        wallet_balance = bybit.get_wallet_balance(account_type="CONTRACT")  # USDT 선물 잔고 확인
-        if 'result' in wallet_balance:
-            usdt_balance = wallet_balance['result'].get('USDT', {}).get('wallet_balance', 0)
-            btc_balance = wallet_balance['result'].get('BTC', {}).get('wallet_balance', 0)
-            logger.info(f"USDT 잔고: {usdt_balance}, BTC 잔고: {btc_balance}")
-            return {"USDT": usdt_balance, "BTC": btc_balance}
-        else:
-            logger.error("잔고 데이터를 가져오지 못했습니다.")
-            return None
-    except Exception as e:
-        logger.error(f"Bybit 잔고 조회 오류: {e}")
-        return None
 
 if __name__ == "__main__":
     # MongoDB와 Bybit 연결 설정
