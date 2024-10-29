@@ -16,7 +16,7 @@ import schedule
 # 환경 변수 로드
 load_dotenv()
 
-# 로깅 설정
+# 로깅 설정 (콘솔과 파일 모두 로그를 출력하도록 설정)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -551,9 +551,12 @@ def job():
     if trading_in_progress:
         logger.warning("Trading job is already in progress, skipping this run.")
         return
+
     try:
         trading_in_progress = True
-        ai_trading()  # 여기에 실제 트레이딩 로직을 실행하도록 함
+        logger.info("Trading job started.")
+        ai_trading()  # 실제 트레이딩 로직 실행
+        logger.info("Trading job completed.")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
