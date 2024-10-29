@@ -33,3 +33,18 @@ def setup_mongodb():
 if __name__ == "__main__":
     # MongoDB 연결 테스트
     setup_mongodb()
+
+# Bybit API 설정
+def setup_bybit():
+    try:
+        api_key = os.getenv("BYBIT_API_KEY")
+        api_secret = os.getenv("BYBIT_API_SECRET")
+        if not api_key or not api_secret:
+            logger.critical("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
+            raise ValueError("BYBIT_API_KEY 또는 BYBIT_API_SECRET 환경 변수가 설정되지 않았습니다.")
+        bybit = HTTP(api_key=api_key, api_secret=api_secret)
+        logger.info("Bybit API 연결 완료!")
+        return bybit
+    except Exception as e:
+        logger.critical(f"Bybit API 연결 오류: {e}")
+        raise
