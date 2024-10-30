@@ -279,7 +279,8 @@ def get_order_book(bybit, symbol="BTCUSDT"):
         dict: 오더북 데이터 또는 None
     """
     try:
-        response = bybit.order_book(symbol=symbol)
+        # 올바른 함수명 사용: public_orderbook
+        response = bybit.public_orderbook(symbol=symbol)
         logger.debug(f"get_order_book API 응답: {response}")
 
         if response['retCode'] != 0:
@@ -293,7 +294,7 @@ def get_order_book(bybit, symbol="BTCUSDT"):
 
         return order_book
     except Exception as e:
-        handle_error(e, "get_order_book 함수")
+        logger.exception(f"get_order_book 함수에서 예외 발생: {e}")
         return None
 
 def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
