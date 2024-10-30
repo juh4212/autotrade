@@ -9,7 +9,7 @@ from ta.utils import dropna
 import time
 import requests
 import logging
-import sqlite3
+from pymongo import MongoClient
 from datetime import datetime, timedelta
 import re
 import schedule
@@ -30,47 +30,42 @@ if not access or not secret:
     raise ValueError("API 키가 없습니다. .env 파일을 확인해주세요.")
 upbit = pyupbit.Upbit(access, secret)
 
-# SQLite 데이터베이스 초기화 함수 - 거래 내역을 저장할 테이블을 생성
+# MongoDB 데이터베이스 초기화 함수 - 거래 내역을 저장할 컬렉션을 생성
 def init_db():
-    conn = sqlite3.connect('bitcoin_trades.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS trades
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  timestamp TEXT,
-                  decision TEXT,
-                  percentage INTEGER,
-                  reason TEXT,
-                  btc_balance REAL,
-                  krw_balance REAL,
-                  btc_avg_buy_price REAL,
-                  btc_krw_price REAL,
-                  reflection TEXT)''')
-    conn.commit()
-    return conn
+    client = MongoClient('mongodb://localhost:27017/')  # MongoDB 연결
+    db = client['bitcoin_trades_db']  # 데이터베이스 선택
+    trades_collection = db['trades']  # 컬렉션 선택
+    return trades_collection
 
 # 거래 기록을 DB에 저장하는 함수
-def log_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
-    c = conn.cursor()
-    timestamp = datetime.now().isoformat()
-    c.execute("""INSERT INTO trades 
-                 (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection))
-    conn.commit()
+def log_trade(trades_collection, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
+    trade_data = {
+        "timestamp": datetime.now().isoformat(),
+        "decision": decision,
+        "percentage": percentage,
+        "reason": reason,
+        "btc_balance": btc_balance,
+        "krw_balance": krw_balance,
+        "btc_avg_buy_price": btc_avg_buy_price,
+        "btc_krw_price": btc_krw_price,
+        "reflection": reflection
+    }
+    trades_collection.insert_one(trade_data)
 
 # 최근 투자 기록 조회
-def get_recent_trades(conn, days=7):
-    c = conn.cursor()
-    seven_days_ago = (datetime.now() - timedelta(days=days)).isoformat()
-    c.execute("SELECT * FROM trades WHERE timestamp > ? ORDER BY timestamp DESC", (seven_days_ago,))
-    columns = [column[0] for column in c.description]
-    return pd.DataFrame.from_records(data=c.fetchall(), columns=columns)
+def get_recent_trades(trades_collection, days=7):
+    seven_days_ago = datetime.now() - timedelta(days=days)
+    recent_trades_cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago.isoformat()}}).sort("timestamp", -1)
+    trades_df = pd.DataFrame(list(recent_trades_cursor))
+    if '_id' in trades_df.columns:
+        trades_df.drop(columns=['_id'], inplace=True)  # MongoDB의 기본 '_id' 필드 제거
+    return trades_df
 
 # 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
 def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
-    # 초기 잔고 계산 (KRW + BTC * 현재 가격)
+    # 초기 잔고 계산 (KRW + BTC * 당시 가격)
     initial_balance = trades_df.iloc[-1]['krw_balance'] + trades_df.iloc[-1]['btc_balance'] * trades_df.iloc[-1]['btc_krw_price']
     # 최종 잔고 계산
     final_balance = trades_df.iloc[0]['krw_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_krw_price']
@@ -190,24 +185,25 @@ def ai_trading():
         logger.error("OpenAI API 키가 없거나 유효하지 않습니다.")
         return None
     try:
-        # 데이터베이스 연결
-        with sqlite3.connect('bitcoin_trades.db') as conn:
-            # 최근 거래 내역 가져오기
-            recent_trades = get_recent_trades(conn)
-            
-            # 현재 시장 데이터 수집 (기존 코드에서 가져온 데이터 사용)
-            current_market_data = {
-                "orderbook": orderbook,
-                "daily_ohlcv": df_daily_recent.to_dict(),
-                "hourly_ohlcv": df_hourly_recent.to_dict()
-            }
-            
-            # 반성 및 개선 내용 생성
-            reflection = generate_reflection(recent_trades, current_market_data)
-            
-            # AI 모델에 반성 내용 제공
-            # Few-shot prompting으로 JSON 예시 추가
-            examples = """
+        # MongoDB 연결
+        trades_collection = init_db()
+        
+        # 최근 거래 내역 가져오기
+        recent_trades = get_recent_trades(trades_collection)
+        
+        # 현재 시장 데이터 수집 (기존 코드에서 가져온 데이터 사용)
+        current_market_data = {
+            "orderbook": orderbook,
+            "daily_ohlcv": df_daily_recent.to_dict(),
+            "hourly_ohlcv": df_hourly_recent.to_dict()
+        }
+        
+        # 반성 및 개선 내용 생성
+        reflection = generate_reflection(recent_trades, current_market_data)
+        
+        # AI 모델에 반성 내용 제공
+        # Few-shot prompting으로 JSON 예시 추가
+        examples = """
 예시 응답 1:
 {
   "decision": "매수",
@@ -230,12 +226,12 @@ def ai_trading():
 }
 """
 
-            response = client.chat.completions.create(
-                model="o1-preview",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"""당신은 비트코인 투자 전문가입니다. 이 분석은 매 4시간마다 수행됩니다. 제공된 데이터를 분석하고 현재 시점에서 매수, 매도 또는 보유 중 어떤 행동을 취해야 하는지 결정하세요. 분석 시 다음 사항을 고려하세요:
+        response = client.chat.completions.create(
+            model="o1-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""당신은 비트코인 투자 전문가입니다. 이 분석은 매 4시간마다 수행됩니다. 제공된 데이터를 분석하고 현재 시점에서 매수, 매도 또는 보유 중 어떤 행동을 취해야 하는지 결정하세요. 분석 시 다음 사항을 고려하세요:
 
 - 기술적 지표와 시장 데이터
 - 전체적인 시장 심리
@@ -253,121 +249,121 @@ def ai_trading():
 percentage는 매수/매도 결정 시 1에서 100 사이의 정수여야 하며, 보유 결정 시 정확히 0이어야 합니다.
 percentage는 분석된 데이터에 기반한 결정의 강도를 반영해야 합니다.
 """
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""현재 투자 상태: {json.dumps(filtered_balances)}
+                },
+                {
+                    "role": "user",
+                    "content": f"""현재 투자 상태: {json.dumps(filtered_balances)}
 호가 정보: {json.dumps(orderbook)}
 일간 OHLCV 데이터와 지표 (최근 60일): {df_daily_recent.to_json()}
 시간별 OHLCV 데이터와 지표 (최근 48시간): {df_hourly_recent.to_json()}
 """
-                    }
-                ]
-            )
+                }
+            ]
+        )
 
-            response_text = response.choices[0].message.content
+        response_text = response.choices[0].message.content
 
-            # AI 응답 파싱
-            def parse_ai_response(response_text):
-                try:
-                    # JSON 부분만 추출
-                    json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(0)
-                        # JSON 파싱
-                        parsed_json = json.loads(json_str)
-                        decision = parsed_json.get('decision')
-                        percentage = parsed_json.get('percentage')
-                        reason = parsed_json.get('reason')
-                        return {'decision': decision, 'percentage': percentage, 'reason': reason}
-                    else:
-                        logger.error("AI 응답에서 JSON을 찾을 수 없습니다.")
-                        return None
-                except json.JSONDecodeError as e:
-                    logger.error(f"JSON 파싱 오류: {e}")
+        # AI 응답 파싱
+        def parse_ai_response(response_text):
+            try:
+                # JSON 부분만 추출
+                json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    # JSON 파싱
+                    parsed_json = json.loads(json_str)
+                    decision = parsed_json.get('decision')
+                    percentage = parsed_json.get('percentage')
+                    reason = parsed_json.get('reason')
+                    return {'decision': decision, 'percentage': percentage, 'reason': reason}
+                else:
+                    logger.error("AI 응답에서 JSON을 찾을 수 없습니다.")
                     return None
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON 파싱 오류: {e}")
+                return None
 
-            parsed_response = parse_ai_response(response_text)
-            if not parsed_response:
-                logger.error("AI 응답 파싱에 실패하였습니다.")
+        parsed_response = parse_ai_response(response_text)
+        if not parsed_response:
+            logger.error("AI 응답 파싱에 실패하였습니다.")
+            return
+
+        decision = parsed_response.get('decision')
+        percentage = parsed_response.get('percentage')
+        reason = parsed_response.get('reason')
+
+        if not decision or reason is None:
+            logger.error("AI 응답에 불완전한 데이터가 있습니다.")
+            return
+
+        logger.info(f"AI 결정: {decision.upper()}")
+        logger.info(f"비율: {percentage}")
+        logger.info(f"결정 이유: {reason}")
+
+        order_executed = False
+
+        if decision == "매수":
+            my_krw = upbit.get_balance("KRW")
+            if my_krw is None:
+                logger.error("KRW 잔고 조회에 실패하였습니다.")
                 return
-
-            decision = parsed_response.get('decision')
-            percentage = parsed_response.get('percentage')
-            reason = parsed_response.get('reason')
-
-            if not decision or reason is None:
-                logger.error("AI 응답에 불완전한 데이터가 있습니다.")
-                return
-
-            logger.info(f"AI 결정: {decision.upper()}")
-            logger.info(f"비율: {percentage}")
-            logger.info(f"결정 이유: {reason}")
-
-            order_executed = False
-
-            if decision == "매수":
-                my_krw = upbit.get_balance("KRW")
-                if my_krw is None:
-                    logger.error("KRW 잔고 조회에 실패하였습니다.")
-                    return
-                buy_amount = my_krw * (percentage / 100) * 0.9995  # 수수료 고려
-                if buy_amount > 5000:
-                    logger.info(f"매수 주문 실행: 보유 KRW의 {percentage}%")
-                    try:
-                        order = upbit.buy_market_order("KRW-BTC", buy_amount)
-                        if order:
-                            logger.info(f"매수 주문이 성공적으로 실행되었습니다: {order}")
-                            order_executed = True
-                        else:
-                            logger.error("매수 주문에 실패하였습니다.")
-                    except Exception as e:
-                        logger.error(f"매수 주문 실행 중 오류 발생: {e}")
-                else:
-                    logger.warning("매수 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
-            elif decision == "매도":
-                my_btc = upbit.get_balance("KRW-BTC")
-                if my_btc is None:
-                    logger.error("BTC 잔고 조회에 실패하였습니다.")
-                    return
-                sell_amount = my_btc * (percentage / 100)
-                current_price = pyupbit.get_current_price("KRW-BTC")
-                if sell_amount * current_price > 5000:
-                    logger.info(f"매도 주문 실행: 보유 BTC의 {percentage}%")
-                    try:
-                        order = upbit.sell_market_order("KRW-BTC", sell_amount)
-                        if order:
-                            order_executed = True
-                        else:
-                            logger.error("매도 주문에 실패하였습니다.")
-                    except Exception as e:
-                        logger.error(f"매도 주문 실행 중 오류 발생: {e}")
-                else:
-                    logger.warning("매도 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
-            elif decision == "보유":
-                logger.info("결정은 보유입니다. 아무 행동도 취하지 않습니다.")
+            buy_amount = my_krw * (percentage / 100) * 0.9995  # 수수료 고려
+            if buy_amount > 5000:
+                logger.info(f"매수 주문 실행: 보유 KRW의 {percentage}%")
+                try:
+                    order = upbit.buy_market_order("KRW-BTC", buy_amount)
+                    if order:
+                        logger.info(f"매수 주문이 성공적으로 실행되었습니다: {order}")
+                        order_executed = True
+                    else:
+                        logger.error("매수 주문에 실패하였습니다.")
+                except Exception as e:
+                    logger.error(f"매수 주문 실행 중 오류 발생: {e}")
             else:
-                logger.error("AI로부터 유효하지 않은 결정을 받았습니다.")
+                logger.warning("매수 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
+        elif decision == "매도":
+            my_btc = upbit.get_balance("KRW-BTC")
+            if my_btc is None:
+                logger.error("BTC 잔고 조회에 실패하였습니다.")
                 return
+            sell_amount = my_btc * (percentage / 100)
+            current_price = pyupbit.get_current_price("KRW-BTC")
+            if sell_amount * current_price > 5000:
+                logger.info(f"매도 주문 실행: 보유 BTC의 {percentage}%")
+                try:
+                    order = upbit.sell_market_order("KRW-BTC", sell_amount)
+                    if order:
+                        order_executed = True
+                    else:
+                        logger.error("매도 주문에 실패하였습니다.")
+                except Exception as e:
+                    logger.error(f"매도 주문 실행 중 오류 발생: {e}")
+            else:
+                logger.warning("매도 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
+        elif decision == "보유":
+            logger.info("결정은 보유입니다. 아무 행동도 취하지 않습니다.")
+        else:
+            logger.error("AI로부터 유효하지 않은 결정을 받았습니다.")
+            return
 
-            # 거래 실행 여부와 관계없이 현재 잔고 조회
-            time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
-            balances = upbit.get_balances()
-            btc_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'BTC'), 0)
-            krw_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'KRW'), 0)
-            btc_avg_buy_price = next((float(balance['avg_buy_price']) for balance in balances if balance['currency'] == 'BTC'), 0)
-            current_btc_price = pyupbit.get_current_price("KRW-BTC")
+        # 거래 실행 여부와 관계없이 현재 잔고 조회
+        time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
+        balances = upbit.get_balances()
+        btc_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'BTC'), 0)
+        krw_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'KRW'), 0)
+        btc_avg_buy_price = next((float(balance['avg_buy_price']) for balance in balances if balance['currency'] == 'BTC'), 0)
+        current_btc_price = pyupbit.get_current_price("KRW-BTC")
 
-            # 거래 기록을 DB에 저장하기
-            log_trade(conn, decision, percentage if order_executed else 0, reason, 
-                      btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
-    except sqlite3.Error as e:
-        logger.error(f"데이터베이스 연결 오류: {e}")
+        # 거래 기록을 MongoDB에 저장하기
+        log_trade(trades_collection, decision, percentage if order_executed else 0, reason, 
+                  btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
+    except Exception as e:
+        logger.error(f"오류 발생: {e}")
         return
 
 if __name__ == "__main__":
-    # 데이터베이스 초기화
-    init_db()
+    # MongoDB 컬렉션 초기화
+    trades_collection = init_db()
 
     # 중복 실행 방지를 위한 변수
     trading_in_progress = False
