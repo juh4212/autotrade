@@ -280,7 +280,7 @@ def get_order_book(bybit, symbol="BTCUSDT"):
     """
     try:
         # 올바른 메서드 이름과 파라미터 전달
-        response = bybit.public_orderbook(symbol=symbol)
+        response = bybit.orderbook(symbol=symbol)
         logger.debug(f"get_order_book API 응답: {response}")
 
         if response['retCode'] != 0:
@@ -669,16 +669,16 @@ def get_position_qty(bybit, symbol="BTCUSDT"):
     try:
         response = bybit.my_position(symbol=symbol)
         logger.debug(f"get_position_qty API 응답: {response}")
-        
+
         if response['retCode'] != 0:
             logger.error(f"포지션 수량 조회 실패: {response['retMsg']}")
             return None
-        
+
         positions = response.get('result', [])
         if not positions:
             logger.info("현재 포지션이 없습니다.")
             return None
-        
+
         position = positions[0]
         qty = float(position.get('size', 0))
         return qty
