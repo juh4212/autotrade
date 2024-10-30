@@ -122,28 +122,31 @@ def log_balance_to_mongodb(collection, balance_data):
 def get_current_position(bybit, symbol="BTCUSDT"):
     """
     현재 포지션을 조회하는 함수.
-    
+
     Parameters:
         bybit (HTTP): Bybit API 클라이언트 객체
         symbol (str): 심볼 이름 (기본값: "BTCUSDT")
-        
+
     Returns:
         str: 현재 포지션 ('long', 'short', 'none') 또는 None
     """
     try:
-        response = bybit.get_position(symbol=symbol)
+        response = bybit.get_positions(
+            category="linear",
+            symbol=symbol
+        )
         logger.debug(f"get_current_position API 응답: {response}")
-        
+
         if response['retCode'] != 0:
             logger.error(f"포지션 조회 실패: {response['retMsg']}")
             return None
-        
+
         positions = response.get('result', {}).get('list', [])
         if not positions:
             logger.info("현재 포지션이 없습니다.")
             return "none"
-        
-        position = positions[0]  # 첫 번째 포지션을 기준으로 함
+
+        position = positions[0]
         side = position.get('side')
         if side == "Buy":
             return "long"
@@ -243,7 +246,7 @@ def get_account_balance(bybit):
             if account_list:
                 account_info = account_list[0]
                 coin_balances = account_info.get('coin', [])
-                
+
                 usdt_balance = next((coin for coin in coin_balances if coin['coin'] == 'USDT'), None)
                 if usdt_balance:
                     equity = float(usdt_balance.get('equity', 0))
@@ -269,7 +272,7 @@ def get_account_balance(bybit):
 def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
     """
     Bybit API를 사용하여 오더북 데이터를 가져오는 함수.
-    
+
     Parameters:
         bybit (HTTP): Bybit API 클라이언트 객체
         symbol (str): 심볼 이름 (기본값: "BTCUSDT")
@@ -280,7 +283,6 @@ def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
         dict: 오더북 데이터 또는 None
     """
     try:
-        # 올바른 메서드 이름 사용: get_orderbook
         response = bybit.get_orderbook(
             category=category,
             symbol=symbol,
@@ -308,19 +310,19 @@ def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
 def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
     """
     Bybit API를 사용하여 일별 OHLCV 데이터를 가져오는 함수.
-    
+
     Parameters:
         bybit (HTTP): Bybit API 클라이언트 객체
-        symbol (str): 심볼 이름 (기본값: "BTCUSDT")
+        symbol (str): 심볼 이름
         interval (str): 시간 간격 ("1" "3" "5" "15" "30" "60" "120" "240" "360" "720" "D" "W" "M")
-        limit (int): 가져올 데이터의 개수 (기본값: 100)
-        
+        limit (int): 가져올 데이터의 개수
+
     Returns:
         pandas.DataFrame: OHLCV 데이터프레임 또는 None
     """
     try:
         response = bybit.get_kline(
-            category="spot",  # category 추가
+            category="spot",
             symbol=symbol,
             interval=interval,
             limit=limit
@@ -336,8 +338,7 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
 
-        # pandas DataFrame으로 변환
-        df = pd.DataFrame(ohlcv_data, columns=['start', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df = pd.DataFrame(ohlcv_data)
         df['timestamp'] = pd.to_datetime(df['start'], unit='s')
         df.set_index('timestamp', inplace=True)
         df['open'] = df['open'].astype(float)
@@ -346,15 +347,12 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
         df['close'] = df['close'].astype(float)
         df['volume'] = df['volume'].astype(float)
 
-        # 기술 지표 추가 (예: 이동 평균)
+        # 기술 지표 추가
         df['SMA_50'] = ta.trend.SMAIndicator(close=df['close'], window=50).sma_indicator()
         df['SMA_200'] = ta.trend.SMAIndicator(close=df['close'], window=200).sma_indicator()
 
         logger.info("일별 OHLCV 데이터 조회 및 처리 완료.")
         return df
-    except AttributeError as ae:
-        logger.exception(f"get_daily_ohlcv 함수에서 AttributeError 발생: {ae}")
-        return None
     except Exception as e:
         handle_error(e, "get_daily_ohlcv 함수")
         return None
@@ -362,19 +360,19 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
 def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
     """
     Bybit API를 사용하여 시간별 OHLCV 데이터를 가져오는 함수.
-    
+
     Parameters:
         bybit (HTTP): Bybit API 클라이언트 객체
-        symbol (str): 심볼 이름 (기본값: "BTCUSDT")
-        interval (str): 시간 간격 ("1" "3" "5" "15" "30" "60" "120" "240" "360" "720" "D" "W" "M")
-        limit (int): 가져올 데이터의 개수 (기본값: 100)
-        
+        symbol (str): 심볼 이름
+        interval (str): 시간 간격
+        limit (int): 가져올 데이터의 개수
+
     Returns:
         pandas.DataFrame: OHLCV 데이터프레임 또는 None
     """
     try:
         response = bybit.get_kline(
-            category="spot",  # category 추가
+            category="spot",
             symbol=symbol,
             interval=interval,
             limit=limit
@@ -390,8 +388,7 @@ def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
 
-        # pandas DataFrame으로 변환
-        df = pd.DataFrame(ohlcv_data, columns=['start', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df = pd.DataFrame(ohlcv_data)
         df['timestamp'] = pd.to_datetime(df['start'], unit='s')
         df.set_index('timestamp', inplace=True)
         df['open'] = df['open'].astype(float)
@@ -400,19 +397,16 @@ def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
         df['close'] = df['close'].astype(float)
         df['volume'] = df['volume'].astype(float)
 
-        # 기술 지표 추가 (예: RSI)
+        # 기술 지표 추가
         df['RSI'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
 
         logger.info("시간별 OHLCV 데이터 조회 및 처리 완료.")
         return df
-    except AttributeError as ae:
-        logger.exception(f"get_hourly_ohlcv 함수에서 AttributeError 발생: {ae}")
-        return None
     except Exception as e:
         handle_error(e, "get_hourly_ohlcv 함수")
         return None
 
-# 이하 코드 생략 (이미 이전에 작성된 함수들)
+# 이하 나머지 함수들도 필요에 따라 작성해주세요.
 
 if __name__ == "__main__":
     # MongoDB, Bybit 및 OpenAI 연결 설정
