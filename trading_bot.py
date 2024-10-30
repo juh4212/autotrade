@@ -194,7 +194,7 @@ def ai_trading(bybit, collection):
             return
 
         # 2. 오더북 데이터 조회
-        order_book = get_order_book(bybit)
+        order_book = get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200)
         if not order_book:
             logger.error("오더북 데이터를 가져오지 못했습니다.")
             return
@@ -267,20 +267,26 @@ def get_account_balance(bybit):
         logger.error(f"Bybit 잔고 조회 오류: {e}")
         return None
 
-def get_order_book(bybit, symbol="BTCUSDT"):
+def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
     """
     Bybit API를 사용하여 오더북 데이터를 가져오는 함수.
     
     Parameters:
         bybit (HTTP): Bybit API 클라이언트 객체
         symbol (str): 심볼 이름 (기본값: "BTCUSDT")
-        
+        category (str): 제품 유형 (예: "spot", "linear", "inverse", "option")
+        limit (int): 각 bid와 ask의 제한 크기
+
     Returns:
         dict: 오더북 데이터 또는 None
     """
     try:
-        # 올바른 메서드 이름과 파라미터 전달
-        response = bybit.orderbook(symbol=symbol)
+        # 올바른 메서드 이름 사용: market_orderbook
+        response = bybit.market_orderbook(
+            category=category,
+            symbol=symbol,
+            limit=limit
+        )
         logger.debug(f"get_order_book API 응답: {response}")
 
         if response['retCode'] != 0:
@@ -547,6 +553,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                     logger.error("계산된 주문 수량이 유효하지 않습니다.")
                     return
                 order = bybit.place_active_order(
+                    category="spot",  # category 추가
                     symbol="BTCUSDT",
                     side="Buy",
                     order_type="Market",
@@ -555,7 +562,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                 )
                 logger.info(f"롱 주문 실행: {order}")
                 # 주문 결과를 MongoDB에 기록
-                log_trade(collection, "long", qty, order.get("price", 0))
+                log_trade(collection, "long", qty, float(order.get("price", 0)))
             else:
                 logger.info("이미 포지션을 보유 중입니다. 롱 포지션을 열지 않습니다.")
 
@@ -567,6 +574,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                     logger.error("계산된 주문 수량이 유효하지 않습니다.")
                     return
                 order = bybit.place_active_order(
+                    category="spot",  # category 추가
                     symbol="BTCUSDT",
                     side="Sell",
                     order_type="Market",
@@ -575,7 +583,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                 )
                 logger.info(f"숏 주문 실행: {order}")
                 # 주문 결과를 MongoDB에 기록
-                log_trade(collection, "short", qty, order.get("price", 0))
+                log_trade(collection, "short", qty, float(order.get("price", 0)))
             else:
                 logger.info("이미 포지션을 보유 중입니다. 숏 포지션을 열지 않습니다.")
 
@@ -587,6 +595,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                     logger.error("포지션 청산을 위한 수량을 가져오지 못했습니다.")
                     return
                 order = bybit.place_active_order(
+                    category="spot",  # category 추가
                     symbol="BTCUSDT",
                     side="Sell",
                     order_type="Market",
@@ -595,7 +604,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                 )
                 logger.info(f"롱 포지션 청산 주문 실행: {order}")
                 # 주문 결과를 MongoDB에 기록
-                log_trade(collection, "close_long", qty, order.get("price", 0))
+                log_trade(collection, "close_long", qty, float(order.get("price", 0)))
             else:
                 logger.info("롱 포지션을 보유하고 있지 않습니다. 청산을 수행하지 않습니다.")
 
@@ -607,6 +616,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                     logger.error("포지션 청산을 위한 수량을 가져오지 못했습니다.")
                     return
                 order = bybit.place_active_order(
+                    category="spot",  # category 추가
                     symbol="BTCUSDT",
                     side="Buy",
                     order_type="Market",
@@ -615,7 +625,7 @@ def execute_trading_decision(bybit, collection, trading_decision, balance_data, 
                 )
                 logger.info(f"숏 포지션 청산 주문 실행: {order}")
                 # 주문 결과를 MongoDB에 기록
-                log_trade(collection, "close_short", qty, order.get("price", 0))
+                log_trade(collection, "close_short", qty, float(order.get("price", 0)))
             else:
                 logger.info("숏 포지션을 보유하고 있지 않습니다. 청산을 수행하지 않습니다.")
 
