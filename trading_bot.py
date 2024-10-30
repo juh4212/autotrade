@@ -279,8 +279,8 @@ def get_order_book(bybit, symbol="BTCUSDT"):
         dict: 오더북 데이터 또는 None
     """
     try:
-        # 올바른 함수명 사용: public_orderbook
-        response = bybit.public_orderbook(symbol=symbol)
+        # 올바른 메서드 이름 사용: orderbook
+        response = bybit.orderbook(symbol=symbol)
         logger.debug(f"get_order_book API 응답: {response}")
 
         if response['retCode'] != 0:
