@@ -279,8 +279,8 @@ def get_order_book(bybit, symbol="BTCUSDT"):
         dict: 오더북 데이터 또는 None
     """
     try:
-        # 올바른 메서드 이름 사용: orderbook
-        response = bybit.orderbook(symbol=symbol)
+        # 올바른 메서드 이름과 파라미터 전달
+        response = bybit.public_orderbook(symbol=symbol)
         logger.debug(f"get_order_book API 응답: {response}")
 
         if response['retCode'] != 0:
@@ -293,6 +293,9 @@ def get_order_book(bybit, symbol="BTCUSDT"):
             return None
 
         return order_book
+    except AttributeError as ae:
+        logger.exception(f"get_order_book 함수에서 AttributeError 발생: {ae}")
+        return None
     except Exception as e:
         logger.exception(f"get_order_book 함수에서 예외 발생: {e}")
         return None
