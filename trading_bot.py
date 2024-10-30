@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import pyupbit
 import pandas as pd
 import json
-import openai
+import openai  # 수정된 부분: OpenAI 라이브러리 임포트 방식 변경
 import ta
 from ta.utils import dropna
 import time
@@ -55,7 +55,9 @@ def log_trade(trades_collection, decision, percentage, reason, btc_balance, krw_
 # 최근 투자 기록 조회
 def get_recent_trades(trades_collection, days=7):
     seven_days_ago = datetime.now() - timedelta(days=days)
-    recent_trades_cursor = trades_collection.find({"timestamp": {"$gte": seven_days_ago.isoformat()}}).sort("timestamp", -1)
+    recent_trades_cursor = trades_collection.find({
+        "timestamp": {"$gte": seven_days_ago.isoformat()}
+    }).sort("timestamp", -1)
     trades_df = pd.DataFrame(list(recent_trades_cursor))
     if '_id' in trades_df.columns:
         trades_df.drop(columns=['_id'], inplace=True)  # MongoDB의 기본 '_id' 필드 제거
@@ -75,22 +77,24 @@ def calculate_performance(trades_df):
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    # 수정된 부분: OpenAI 라이브러리 사용 방식 변경
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
         logger.error("OpenAI API 키가 없거나 유효하지 않습니다.")
         return None
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
-    response = client.chat.completions.create(
-        model="o1-preview",
-        messages=[
-            {
-                "role": "user",
-                "content": "당신은 최근 거래 성과와 현재 시장 상황을 분석하여 향후 거래 결정을 위한 인사이트와 개선 사항을 생성하는 AI 트레이딩 어시스턴트입니다."
-            },
-            {
-                "role": "user",
-                "content": f"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # 사용 가능한 모델로 변경
+            messages=[
+                {
+                    "role": "user",
+                    "content": "당신은 최근 거래 성과와 현재 시장 상황을 분석하여 향후 거래 결정을 위한 인사이트와 개선 사항을 생성하는 AI 트레이딩 어시스턴트입니다."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 최근 거래 데이터:
 {trades_df.to_json(orient='records')}
 
@@ -107,15 +111,13 @@ def generate_reflection(trades_df, current_market_data):
 
 응답은 250자 이내로 제한해주세요.
 """
-            }
-        ]
-    )
-
-    try:
+                }
+            ]
+        )
         response_content = response.choices[0].message.content
         return response_content
-    except (IndexError, AttributeError) as e:
-        logger.error(f"응답 내용 추출 중 오류 발생: {e}")
+    except Exception as e:
+        logger.error(f"OpenAI API 호출 중 오류 발생: {e}")
         return None
 
 # 데이터프레임에 보조 지표를 추가하는 함수
@@ -180,8 +182,9 @@ def ai_trading():
     df_hourly_recent = df_hourly.tail(48)
     
     ### AI에게 데이터 제공하고 판단 받기
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
+    # 수정된 부분: OpenAI 라이브러리 사용 방식 변경
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
         logger.error("OpenAI API 키가 없거나 유효하지 않습니다.")
         return None
     try:
@@ -226,8 +229,8 @@ def ai_trading():
 }
 """
 
-        response = client.chat.completions.create(
-            model="o1-preview",
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # 사용 가능한 모델로 변경
             messages=[
                 {
                     "role": "user",
@@ -355,6 +358,7 @@ percentage는 분석된 데이터에 기반한 결정의 강도를 반영해야 
         current_btc_price = pyupbit.get_current_price("KRW-BTC")
 
         # 거래 기록을 MongoDB에 저장하기
+        trades_collection = init_db()
         log_trade(trades_collection, decision, percentage if order_executed else 0, reason, 
                   btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
     except Exception as e:
