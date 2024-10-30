@@ -11,5 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 나머지 코드 파일 복사
 COPY . /app
 
+# 환경 변수 로드
+ENV PYTHONUNBUFFERED=1
+
 # 컨테이너가 실행될 때 기본으로 실행할 명령어
 CMD ["python", "trading_bot.py"]
