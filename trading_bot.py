@@ -306,27 +306,27 @@ def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
         logger.exception(f"get_order_book 함수에서 예외 발생: {e}")
         return None
 
-def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
+def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
     """
-    Bybit API를 사용하여 일별 OHLCV 데이터를 가져오는 함수.
+    Bybit API를 사용하여 시간별 OHLCV 데이터를 가져오는 함수.
     
     Parameters:
         bybit (HTTP): Bybit API 클라이언트 객체
         symbol (str): 심볼 이름 (기본값: "BTCUSDT")
-        interval (str): 시간 간격 (기본값: "D" - 일별)
+        interval (str): 시간 간격 (기본값: "60" - 시간별)
         limit (int): 가져올 데이터의 개수 (기본값: 100)
         
     Returns:
         pandas.DataFrame: OHLCV 데이터프레임 또는 None
     """
     try:
-        response = bybit.query_kline(
+        response = bybit.get_kline(
             category="spot",  # category 추가
             symbol=symbol,
             interval=interval,
             limit=limit
         )
-        logger.debug(f"get_daily_ohlcv API 응답: {response}")
+        logger.debug(f"get_hourly_ohlcv API 응답: {response}")
 
         if response['retCode'] != 0:
             logger.error(f"OHLCV 데이터 조회 실패: {response['retMsg']}")
@@ -336,6 +336,42 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
         if not ohlcv_data:
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
+
+        # 데이터를 pandas DataFrame으로 변환
+        df = pd.DataFrame(ohlcv_data)
+        df['timestamp'] = pd.to_datetime(df['openTime'], unit='s')
+        df.set_index('timestamp', inplace=True)
+
+        # 기술 지표 추가 (예: RSI)
+        df['RSI'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+
+        logger.info("시간별 OHLCV 데이터 조회 및 처리 완료.")
+        return df
+    except AttributeError as ae:
+        logger.exception(f"get_hourly_ohlcv 함수에서 AttributeError 발생: {ae}")
+        return None
+    except Exception as e:
+        handle_error(e, "get_hourly_ohlcv 함수")
+        return None
+
+        # 데이터를 pandas DataFrame으로 변환
+        df = pd.DataFrame(ohlcv_data)
+        df['timestamp'] = pd.to_datetime(df['openTime'], unit='s')
+        df.set_index('timestamp', inplace=True)
+
+        # 기술 지표 추가 (예: 이동 평균)
+        df['SMA_50'] = ta.trend.SMAIndicator(close=df['close'], window=50).sma_indicator()
+        df['SMA_200'] = ta.trend.SMAIndicator(close=df['close'], window=200).sma_indicator()
+
+        logger.info("일별 OHLCV 데이터 조회 및 처리 완료.")
+        return df
+    except AttributeError as ae:
+        logger.exception(f"get_daily_ohlcv 함수에서 AttributeError 발생: {ae}")
+        return None
+    except Exception as e:
+        handle_error(e, "get_daily_ohlcv 함수")
+        return None
+
 
         # pandas DataFrame으로 변환
         df = pd.DataFrame(ohlcv_data)
