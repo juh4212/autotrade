@@ -1,415 +1,402 @@
 import os
-import logging
-from pymongo import MongoClient, ASCENDING
 from dotenv import load_dotenv
-from datetime import datetime
-from pybit.unified_trading import HTTP  # Bybit v5 API 사용
-import threading
+import pyupbit
 import pandas as pd
-import ta  # 기술 지표 계산을 위한 라이브러리
-import openai  # OpenAI API 사용
-import re  # 정규 표현식 사용
-import json  # JSON 파싱을 위한 라이브러리
+import json
+from openai import OpenAI
+import ta
+from ta.utils import dropna
+import time
+import requests
+import logging
+import sqlite3
+from datetime import datetime, timedelta
+import re
+import schedule
+import numpy as np
 
-# 환경 변수 로드
+# .env 파일에 저장된 환경 변수를 불러오기 (API 키 등)
 load_dotenv()
 
 # 로깅 설정 - 로그 레벨을 INFO로 설정하여 중요 정보 출력
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# MongoDB 설정 및 연결
-def setup_mongodb():
-    mongo_uri = os.getenv("MONGODB_URI")
-    print("MongoDB URI:", mongo_uri)  # URI 확인을 위해 출력
-    try:
-        client = MongoClient(mongo_uri)
-        db = client['bitcoin_trades_db']
-        trades_collection = db['trades']
-        # 필요한 인덱스 생성 (예: timestamp 인덱스)
-        trades_collection.create_index([('timestamp', ASCENDING)])
-        logger.info("MongoDB 연결 및 초기화 완료!")
-        return trades_collection
-    except Exception as e:
-        logger.critical(f"MongoDB 연결 오류: {e}")
-        raise
+# Upbit 객체 생성
+access = os.getenv("UPBIT_ACCESS_KEY")
+secret = os.getenv("UPBIT_SECRET_KEY")
+if not access or not secret:
+    logger.error("API 키를 찾을 수 없습니다. .env 파일을 확인해주세요.")
+    raise ValueError("API 키가 없습니다. .env 파일을 확인해주세요.")
+upbit = pyupbit.Upbit(access, secret)
 
-# Bybit API 설정
-def setup_bybit():
-    try:
-        api_key = os.getenv("BYBIT_API_KEY")
-        api_secret = os.getenv("BYBIT_API_SECRET")
-        if not api_key or not api_secret:
-            logger.critical("Bybit API 키가 설정되지 않았습니다.")
-            raise ValueError("Bybit API 키가 누락되었습니다.")
-        bybit = HTTP(
-            api_key=api_key,
-            api_secret=api_secret,
-            endpoint="https://api.bybit.com"
-        )
-        logger.info("Bybit API 연결 완료!")
-        return bybit
-    except Exception as e:
-        logger.critical(f"Bybit API 연결 오류: {e}")
-        raise
+# SQLite 데이터베이스 초기화 함수 - 거래 내역을 저장할 테이블을 생성
+def init_db():
+    conn = sqlite3.connect('bitcoin_trades.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS trades
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  timestamp TEXT,
+                  decision TEXT,
+                  percentage INTEGER,
+                  reason TEXT,
+                  btc_balance REAL,
+                  krw_balance REAL,
+                  btc_avg_buy_price REAL,
+                  btc_krw_price REAL,
+                  reflection TEXT)''')
+    conn.commit()
+    return conn
 
-# OpenAI API 설정
-def setup_openai():
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        logger.critical("OpenAI API 키가 설정되지 않았습니다.")
-        raise ValueError("OpenAI API 키가 누락되었습니다.")
-    openai.api_key = openai_api_key
-    logger.info("OpenAI API 설정 완료!")
+# 거래 기록을 DB에 저장하는 함수
+def log_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
+    c = conn.cursor()
+    timestamp = datetime.now().isoformat()
+    c.execute("""INSERT INTO trades 
+                 (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection))
+    conn.commit()
 
-# 도우미 함수 정의
+# 최근 투자 기록 조회
+def get_recent_trades(conn, days=7):
+    c = conn.cursor()
+    seven_days_ago = (datetime.now() - timedelta(days=days)).isoformat()
+    c.execute("SELECT * FROM trades WHERE timestamp > ? ORDER BY timestamp DESC", (seven_days_ago,))
+    columns = [column[0] for column in c.description]
+    return pd.DataFrame.from_records(data=c.fetchall(), columns=columns)
 
-def get_current_timestamp():
-    """
-    현재 UTC 시간을 ISO 형식으로 반환합니다.
-    """
-    return datetime.utcnow().isoformat()
+# 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
+def calculate_performance(trades_df):
+    if trades_df.empty:
+        return 0  # 기록이 없을 경우 0%로 설정
+    # 초기 잔고 계산 (KRW + BTC * 현재 가격)
+    initial_balance = trades_df.iloc[-1]['krw_balance'] + trades_df.iloc[-1]['btc_balance'] * trades_df.iloc[-1]['btc_krw_price']
+    # 최종 잔고 계산
+    final_balance = trades_df.iloc[0]['krw_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_krw_price']
+    return (final_balance - initial_balance) / initial_balance * 100
 
-def validate_balance_data(balance_data):
-    """
-    잔고 데이터의 유효성을 검증합니다.
-    """
-    if not balance_data:
-        logger.error("잔고 데이터가 비어 있습니다.")
-        return False
-    required_keys = ["equity", "available_to_withdraw"]
-    for key in required_keys:
-        if key not in balance_data:
-            logger.error(f"잔고 데이터에 '{key}' 키가 없습니다.")
-            return False
-    return True
+# AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
+def generate_reflection(trades_df, current_market_data):
+    performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-def handle_error(e, context=""):
-    """
-    공통 에러 핸들링 함수.
-    """
-    if context:
-        logger.error(f"{context} 오류: {e}")
-    else:
-        logger.error(f"오류 발생: {e}")
-
-def log_event(message, level="info"):
-    """
-    특정 이벤트를 로그로 기록하는 함수.
-    """
-    if level == "info":
-        logger.info(message)
-    elif level == "warning":
-        logger.warning(message)
-    elif level == "error":
-        logger.error(message)
-    elif level == "critical":
-        logger.critical(message)
-    else:
-        logger.debug(message)
-
-# MongoDB에 잔고 기록
-def log_balance_to_mongodb(collection, balance_data):
-    if not validate_balance_data(balance_data):
-        return
-    balance_record = {
-        "timestamp": get_current_timestamp(),
-        "balance_data": balance_data
-    }
-    try:
-        collection.insert_one(balance_record)
-        logger.info("계좌 잔고가 MongoDB에 성공적으로 저장되었습니다.")
-    except Exception as e:
-        handle_error(e, "MongoDB에 계좌 잔고 저장")
-
-# 현재 포지션 조회 함수 추가
-def get_current_position(bybit, symbol="BTCUSDT"):
-    """
-    현재 포지션을 조회하는 함수.
-
-    Parameters:
-        bybit (HTTP): Bybit API 클라이언트 객체
-        symbol (str): 심볼 이름 (기본값: "BTCUSDT")
-
-    Returns:
-        str: 현재 포지션 ('long', 'short', 'none') 또는 None
-    """
-    try:
-        response = bybit.get_positions(
-            category="linear",
-            symbol=symbol
-        )
-        logger.debug(f"get_current_position API 응답: {response}")
-
-        if response['retCode'] != 0:
-            logger.error(f"포지션 조회 실패: {response['retMsg']}")
-            return None
-
-        positions = response.get('result', {}).get('list', [])
-        if not positions:
-            logger.info("현재 포지션이 없습니다.")
-            return "none"
-
-        position = positions[0]
-        side = position.get('side')
-        if side == "Buy":
-            return "long"
-        elif side == "Sell":
-            return "short"
-        else:
-            return "none"
-    except Exception as e:
-        handle_error(e, "get_current_position 함수")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    if not client.api_key:
+        logger.error("OpenAI API 키가 없거나 유효하지 않습니다.")
         return None
 
-# 글로벌 변수 및 락 설정
-trading_in_progress = False
-trading_lock = threading.Lock()
+    # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
+    response = client.chat.completions.create(
+        model="o1-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": "당신은 최근 거래 성과와 현재 시장 상황을 분석하여 향후 거래 결정을 위한 인사이트와 개선 사항을 생성하는 AI 트레이딩 어시스턴트입니다."
+            },
+            {
+                "role": "user",
+                "content": f"""
+최근 거래 데이터:
+{trades_df.to_json(orient='records')}
 
-def job(bybit, collection):
-    """
-    스케줄링된 트레이딩 작업을 수행하는 함수.
-    """
-    global trading_in_progress
-    with trading_lock:
-        if trading_in_progress:
-            logger.warning("이미 트레이딩 작업이 진행 중입니다. 현재 작업을 건너뜁니다.")
-            return
-        trading_in_progress = True
+현재 시장 데이터:
+{current_market_data}
+
+지난 7일 동안의 전체 퍼포먼스: {performance:.2f}%
+
+이 데이터를 분석하고 다음을 제공해주세요:
+1. 최근 거래 결정에 대한 간단한 반성
+2. 잘된 점과 개선이 필요한 점에 대한 인사이트
+3. 향후 거래 결정을 위한 개선 제안
+4. 시장 데이터에서 발견한 패턴이나 트렌드
+
+응답은 250자 이내로 제한해주세요.
+"""
+            }
+        ]
+    )
 
     try:
-        logger.info("트레이딩 작업 시작...")
-        ai_trading(bybit, collection)
-        logger.info("트레이딩 작업 완료.")
-    except Exception as e:
-        handle_error(e, "job 함수")
-    finally:
-        with trading_lock:
-            trading_in_progress = False
+        response_content = response.choices[0].message.content
+        return response_content
+    except (IndexError, AttributeError) as e:
+        logger.error(f"응답 내용 추출 중 오류 발생: {e}")
+        return None
 
-# ai_trading 함수 정의
-def ai_trading(bybit, collection):
-    """
-    AI 기반 트레이딩 로직을 수행하는 함수.
-    """
+# 데이터프레임에 보조 지표를 추가하는 함수
+def add_indicators(df):
+    # 볼린저 밴드 추가
+    indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
+    df['bb_bbm'] = indicator_bb.bollinger_mavg()
+    df['bb_bbh'] = indicator_bb.bollinger_hband()
+    df['bb_bbl'] = indicator_bb.bollinger_lband()
+    
+    # RSI (Relative Strength Index) 추가
+    df['rsi'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+    
+    # MACD (Moving Average Convergence Divergence) 추가
+    macd = ta.trend.MACD(close=df['close'])
+    df['macd'] = macd.macd()
+    df['macd_signal'] = macd.macd_signal()
+    df['macd_diff'] = macd.macd_diff()
+    
+    # 이동평균선 (단기, 장기)
+    df['sma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
+    df['ema_12'] = ta.trend.EMAIndicator(close=df['close'], window=12).ema_indicator()
+
+    # Stochastic Oscillator 추가
+    stoch = ta.momentum.StochasticOscillator(
+        high=df['high'], low=df['low'], close=df['close'], window=14, smooth_window=3)
+    df['stoch_k'] = stoch.stoch()
+    df['stoch_d'] = stoch.stoch_signal()
+
+    # Average True Range (ATR) 추가
+    df['atr'] = ta.volatility.AverageTrueRange(
+        high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+
+    # On-Balance Volume (OBV) 추가
+    df['obv'] = ta.volume.OnBalanceVolumeIndicator(
+        close=df['close'], volume=df['volume']).on_balance_volume()
+
+    return df
+
+### 메인 AI 트레이딩 로직
+def ai_trading():
+    global upbit
+    ### 데이터 가져오기
+    # 1. 현재 투자 상태 조회
+    all_balances = upbit.get_balances()
+    filtered_balances = [balance for balance in all_balances if balance['currency'] in ['BTC', 'KRW']]
+    
+    # 2. 오더북(호가 데이터) 조회
+    orderbook = pyupbit.get_orderbook("KRW-BTC")
+    
+    # 3. 차트 데이터 조회 및 보조지표 추가
+    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=180)
+    df_daily = dropna(df_daily)
+    df_daily = add_indicators(df_daily)
+    
+    df_hourly = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=168)  # 7일간의 시간별 데이터
+    df_hourly = dropna(df_hourly)
+    df_hourly = add_indicators(df_hourly)
+
+    # 최근 데이터만 사용하도록 설정 (메모리 절약)
+    df_daily_recent = df_daily.tail(60)
+    df_hourly_recent = df_hourly.tail(48)
+    
+    ### AI에게 데이터 제공하고 판단 받기
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    if not client.api_key:
+        logger.error("OpenAI API 키가 없거나 유효하지 않습니다.")
+        return None
     try:
-        # 1. 현재 잔고 조회
-        balance_data = get_account_balance(bybit)
-        if not balance_data:
-            logger.error("잔고 데이터를 가져오지 못했습니다.")
-            return
+        # 데이터베이스 연결
+        with sqlite3.connect('bitcoin_trades.db') as conn:
+            # 최근 거래 내역 가져오기
+            recent_trades = get_recent_trades(conn)
+            
+            # 현재 시장 데이터 수집 (기존 코드에서 가져온 데이터 사용)
+            current_market_data = {
+                "orderbook": orderbook,
+                "daily_ohlcv": df_daily_recent.to_dict(),
+                "hourly_ohlcv": df_hourly_recent.to_dict()
+            }
+            
+            # 반성 및 개선 내용 생성
+            reflection = generate_reflection(recent_trades, current_market_data)
+            
+            # AI 모델에 반성 내용 제공
+            # Few-shot prompting으로 JSON 예시 추가
+            examples = """
+예시 응답 1:
+{
+  "decision": "매수",
+  "percentage": 50,
+  "reason": "현재 시장 지표와 긍정적인 추세에 따라 투자하기에 좋은 기회입니다."
+}
 
-        # 2. 오더북 데이터 조회
-        order_book = get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200)
-        if not order_book:
-            logger.error("오더북 데이터를 가져오지 못했습니다.")
-            return
+예시 응답 2:
+{
+  "decision": "매도",
+  "percentage": 30,
+  "reason": "시장에 부정적인 추세가 관찰되어 보유 자산의 일부를 매도하는 것이 좋습니다."
+}
 
-        # 3. 일별 OHLCV 데이터 조회 및 기술 지표 추가
-        daily_ohlcv = get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100)
-        if daily_ohlcv is None:
-            logger.error("일별 OHLCV 데이터를 가져오지 못했습니다.")
-            return
+예시 응답 3:
+{
+  "decision": "보유",
+  "percentage": 0,
+  "reason": "시장 지표가 중립적이므로 더 명확한 신호를 기다리는 것이 좋습니다."
+}
+"""
 
-        # 4. 시간별 OHLCV 데이터 조회 및 기술 지표 추가
-        hourly_ohlcv = get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100)
-        if hourly_ohlcv is None:
-            logger.error("시간별 OHLCV 데이터를 가져오지 못했습니다.")
-            return
+            response = client.chat.completions.create(
+                model="o1-preview",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"""당신은 비트코인 투자 전문가입니다. 이 분석은 매 4시간마다 수행됩니다. 제공된 데이터를 분석하고 현재 시점에서 매수, 매도 또는 보유 중 어떤 행동을 취해야 하는지 결정하세요. 분석 시 다음 사항을 고려하세요:
 
-        # 5. 현재 포지션 조회
-        current_position = get_current_position(bybit, symbol="BTCUSDT")
-        if current_position is None:
-            logger.error("현재 포지션을 조회하지 못했습니다.")
-            return
+- 기술적 지표와 시장 데이터
+- 전체적인 시장 심리
+- 최근 거래 성과와 반성 내용
 
-        # 6. AI를 사용하여 트레이딩 결정 요청
-        trading_decision = request_ai_trading_decision(
-            collection,
-            balance_data,
-            daily_ohlcv,
-            hourly_ohlcv
-        )
-        if not trading_decision:
-            logger.error("AI로부터 트레이딩 결정을 받지 못했습니다.")
-            return
+최근 거래 반성 내용:
+{reflection}
 
-        # 7. AI 응답 파싱 및 결정 실행
-        execute_trading_decision(bybit, collection, trading_decision, balance_data, current_position)
+분석에 기반하여 결정을 내리고 그 이유를 제공하세요.
 
-    except Exception as e:
-        handle_error(e, "ai_trading 함수")
+다음의 JSON 형식으로 응답을 제공하세요:
 
-# Bybit 계좌 잔고 조회
-def get_account_balance(bybit):
-    try:
-        wallet_balance = bybit.get_wallet_balance(accountType="CONTRACT")
-        logger.info("Bybit API 응답 데이터: %s", wallet_balance)  # 전체 응답 데이터 출력
-        if wallet_balance['retCode'] == 0 and 'result' in wallet_balance:
-            account_list = wallet_balance['result'].get('list', [])
-            if account_list:
-                account_info = account_list[0]
-                coin_balances = account_info.get('coin', [])
-                usdt_balance = next((coin for coin in coin_balances if coin['coin'] == 'USDT'), None)
-                if usdt_balance:
-                    equity = float(usdt_balance.get('equity', 0))
-                    available_to_withdraw = float(usdt_balance.get('availableToWithdraw', 0))
-                    logger.info(f"USDT 전체 자산: {equity}, 사용 가능한 자산: {available_to_withdraw}")
-                    return {
-                        "equity": equity,
-                        "available_to_withdraw": available_to_withdraw
+{examples}
+
+percentage는 매수/매도 결정 시 1에서 100 사이의 정수여야 하며, 보유 결정 시 정확히 0이어야 합니다.
+percentage는 분석된 데이터에 기반한 결정의 강도를 반영해야 합니다.
+"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""현재 투자 상태: {json.dumps(filtered_balances)}
+호가 정보: {json.dumps(orderbook)}
+일간 OHLCV 데이터와 지표 (최근 60일): {df_daily_recent.to_json()}
+시간별 OHLCV 데이터와 지표 (최근 48시간): {df_hourly_recent.to_json()}
+"""
                     }
-                else:
-                    logger.error("USDT 잔고 데이터를 찾을 수 없습니다.")
+                ]
+            )
+
+            response_text = response.choices[0].message.content
+
+            # AI 응답 파싱
+            def parse_ai_response(response_text):
+                try:
+                    # JSON 부분만 추출
+                    json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        # JSON 파싱
+                        parsed_json = json.loads(json_str)
+                        decision = parsed_json.get('decision')
+                        percentage = parsed_json.get('percentage')
+                        reason = parsed_json.get('reason')
+                        return {'decision': decision, 'percentage': percentage, 'reason': reason}
+                    else:
+                        logger.error("AI 응답에서 JSON을 찾을 수 없습니다.")
+                        return None
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON 파싱 오류: {e}")
                     return None
+
+            parsed_response = parse_ai_response(response_text)
+            if not parsed_response:
+                logger.error("AI 응답 파싱에 실패하였습니다.")
+                return
+
+            decision = parsed_response.get('decision')
+            percentage = parsed_response.get('percentage')
+            reason = parsed_response.get('reason')
+
+            if not decision or reason is None:
+                logger.error("AI 응답에 불완전한 데이터가 있습니다.")
+                return
+
+            logger.info(f"AI 결정: {decision.upper()}")
+            logger.info(f"비율: {percentage}")
+            logger.info(f"결정 이유: {reason}")
+
+            order_executed = False
+
+            if decision == "매수":
+                my_krw = upbit.get_balance("KRW")
+                if my_krw is None:
+                    logger.error("KRW 잔고 조회에 실패하였습니다.")
+                    return
+                buy_amount = my_krw * (percentage / 100) * 0.9995  # 수수료 고려
+                if buy_amount > 5000:
+                    logger.info(f"매수 주문 실행: 보유 KRW의 {percentage}%")
+                    try:
+                        order = upbit.buy_market_order("KRW-BTC", buy_amount)
+                        if order:
+                            logger.info(f"매수 주문이 성공적으로 실행되었습니다: {order}")
+                            order_executed = True
+                        else:
+                            logger.error("매수 주문에 실패하였습니다.")
+                    except Exception as e:
+                        logger.error(f"매수 주문 실행 중 오류 발생: {e}")
+                else:
+                    logger.warning("매수 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
+            elif decision == "매도":
+                my_btc = upbit.get_balance("KRW-BTC")
+                if my_btc is None:
+                    logger.error("BTC 잔고 조회에 실패하였습니다.")
+                    return
+                sell_amount = my_btc * (percentage / 100)
+                current_price = pyupbit.get_current_price("KRW-BTC")
+                if sell_amount * current_price > 5000:
+                    logger.info(f"매도 주문 실행: 보유 BTC의 {percentage}%")
+                    try:
+                        order = upbit.sell_market_order("KRW-BTC", sell_amount)
+                        if order:
+                            order_executed = True
+                        else:
+                            logger.error("매도 주문에 실패하였습니다.")
+                    except Exception as e:
+                        logger.error(f"매도 주문 실행 중 오류 발생: {e}")
+                else:
+                    logger.warning("매도 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
+            elif decision == "보유":
+                logger.info("결정은 보유입니다. 아무 행동도 취하지 않습니다.")
             else:
-                logger.error("계정 리스트가 비어 있습니다.")
-                return None
-        else:
-            logger.error("잔고 데이터를 가져오지 못했습니다.")
-            return None
-    except Exception as e:
-        logger.error(f"Bybit 잔고 조회 오류: {e}")
-        return None
+                logger.error("AI로부터 유효하지 않은 결정을 받았습니다.")
+                return
 
-def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
-    """
-    Bybit API를 사용하여 오더북 데이터를 가져오는 함수.
+            # 거래 실행 여부와 관계없이 현재 잔고 조회
+            time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
+            balances = upbit.get_balances()
+            btc_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'BTC'), 0)
+            krw_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'KRW'), 0)
+            btc_avg_buy_price = next((float(balance['avg_buy_price']) for balance in balances if balance['currency'] == 'BTC'), 0)
+            current_btc_price = pyupbit.get_current_price("KRW-BTC")
 
-    Parameters:
-        bybit (HTTP): Bybit API 클라이언트 객체
-        symbol (str): 심볼 이름 (기본값: "BTCUSDT")
-        category (str): 제품 유형 (예: "spot", "linear", "inverse", "option")
-        limit (int): 각 bid와 ask의 제한 크기
-
-    Returns:
-        dict: 오더북 데이터 또는 None
-    """
-    try:
-        response = bybit.get_orderbook(
-            category=category,
-            symbol=symbol,
-            limit=limit
-        )
-        logger.debug(f"get_order_book API 응답: {response}")
-
-        if response['retCode'] != 0:
-            logger.error(f"오더북 데이터 조회 실패: {response['retMsg']}")
-            return None
-
-        order_book = response.get('result', {})
-        if not order_book:
-            logger.error("오더북 데이터가 비어 있습니다.")
-            return None
-
-        return order_book
-    except AttributeError as ae:
-        logger.exception(f"get_order_book 함수에서 AttributeError 발생: {ae}")
-        return None
-    except Exception as e:
-        logger.exception(f"get_order_book 함수에서 예외 발생: {e}")
-        return None
-
-def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
-    """
-    Bybit API를 사용하여 일별 OHLCV 데이터를 가져오는 함수.
-
-    Parameters:
-        bybit (HTTP): Bybit API 클라이언트 객체
-        symbol (str): 심볼 이름
-        interval (str): 시간 간격 ("1" "3" "5" "15" "30" "60" "120" "240" "360" "720" "D" "W" "M")
-        limit (int): 가져올 데이터의 개수
-
-    Returns:
-        pandas.DataFrame: OHLCV 데이터프레임 또는 None
-    """
-    try:
-        response = bybit.get_kline(
-            category="spot",
-            symbol=symbol,
-            interval=interval,
-            limit=limit
-        )
-        logger.debug(f"get_daily_ohlcv API 응답: {response}")
-
-        if response['retCode'] != 0:
-            logger.error(f"OHLCV 데이터 조회 실패: {response['retMsg']}")
-            return None
-
-        ohlcv_data = response.get('result', {}).get('list', [])
-        if not ohlcv_data:
-            logger.error("OHLCV 데이터가 비어 있습니다.")
-            return None
-
-        # 데이터 컬럼 지정
-        df = pd.DataFrame(ohlcv_data, columns=['start', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-        df['timestamp'] = pd.to_datetime(df['start'], unit='s')
-        df.set_index('timestamp', inplace=True)
-        df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
-
-        # 기술 지표 추가
-        df['SMA_50'] = ta.trend.SMAIndicator(close=df['close'], window=50).sma_indicator()
-        df['SMA_200'] = ta.trend.SMAIndicator(close=df['close'], window=200).sma_indicator()
-
-        logger.info("일별 OHLCV 데이터 조회 및 처리 완료.")
-        return df
-    except Exception as e:
-        handle_error(e, "get_daily_ohlcv 함수")
-        return None
-
-def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
-    """
-    Bybit API를 사용하여 시간별 OHLCV 데이터를 가져오는 함수.
-
-    Parameters:
-        bybit (HTTP): Bybit API 클라이언트 객체
-        symbol (str): 심볼 이름
-        interval (str): 시간 간격
-        limit (int): 가져올 데이터의 개수
-
-    Returns:
-        pandas.DataFrame: OHLCV 데이터프레임 또는 None
-    """
-    try:
-        response = bybit.get_kline(
-            category="spot",
-            symbol=symbol,
-            interval=interval,
-            limit=limit
-        )
-        logger.debug(f"get_hourly_ohlcv API 응답: {response}")
-
-        if response['retCode'] != 0:
-            logger.error(f"OHLCV 데이터 조회 실패: {response['retMsg']}")
-            return None
-
-        ohlcv_data = response.get('result', {}).get('list', [])
-        if not ohlcv_data:
-            logger.error("OHLCV 데이터가 비어 있습니다.")
-            return None
-
-        # 데이터 컬럼 지정
-        df = pd.DataFrame(ohlcv_data, columns=['start', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-        df['timestamp'] = pd.to_datetime(df['start'], unit='s')
-        df.set_index('timestamp', inplace=True)
-        df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
-
-        # 기술 지표 추가
-        df['RSI'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
-
-        logger.info("시간별 OHLCV 데이터 조회 및 처리 완료.")
-        return df
-    except Exception as e:
-        handle_error(e, "get_hourly_ohlcv 함수")
-        return None
-
-# 이하 필요한 함수들을 추가로 작성해주세요 (예: request_ai_trading_decision, execute_trading_decision 등)
+            # 거래 기록을 DB에 저장하기
+            log_trade(conn, decision, percentage if order_executed else 0, reason, 
+                      btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
+    except sqlite3.Error as e:
+        logger.error(f"데이터베이스 연결 오류: {e}")
+        return
 
 if __name__ == "__main__":
-    # MongoDB, Bybit 및 OpenAI 연결 설정
-    trades_collection = setup_mongodb()
-    bybit = setup_bybit()
-    setup_openai()
+    # 데이터베이스 초기화
+    init_db()
 
-    # 트레이딩 작업을 테스트하기 위해 job 함수 호출
-    job(bybit, trades_collection)
+    # 중복 실행 방지를 위한 변수
+    trading_in_progress = False
+
+    # 트레이딩 작업을 수행하는 함수
+    def job():
+        global trading_in_progress
+        if trading_in_progress:
+            logger.warning("트레이딩 작업이 이미 진행 중입니다. 이번 실행은 건너뜁니다.")
+            return
+        try:
+            trading_in_progress = True
+            ai_trading()
+        except Exception as e:
+            logger.error(f"오류 발생: {e}")
+        finally:
+            trading_in_progress = False
+
+    # 테스트
+    # job()
+
+    # 매 4시간마다 실행
+    schedule.every().day.at("00:00").do(job)
+    schedule.every().day.at("04:00").do(job)
+    schedule.every().day.at("08:00").do(job)
+    schedule.every().day.at("12:00").do(job)
+    schedule.every().day.at("16:00").do(job)
+    schedule.every().day.at("20:00").do(job)
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
