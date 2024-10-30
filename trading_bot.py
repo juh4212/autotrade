@@ -42,7 +42,11 @@ def setup_bybit():
         if not api_key or not api_secret:
             logger.critical("Bybit API 키가 설정되지 않았습니다.")
             raise ValueError("Bybit API 키가 누락되었습니다.")
-        bybit = HTTP(api_key=api_key, api_secret=api_secret)
+        bybit = HTTP(
+            api_key=api_key,
+            api_secret=api_secret,
+            endpoint="https://api.bybit.com"
+        )
         logger.info("Bybit API 연결 완료!")
         return bybit
     except Exception as e:
@@ -246,7 +250,6 @@ def get_account_balance(bybit):
             if account_list:
                 account_info = account_list[0]
                 coin_balances = account_info.get('coin', [])
-
                 usdt_balance = next((coin for coin in coin_balances if coin['coin'] == 'USDT'), None)
                 if usdt_balance:
                     equity = float(usdt_balance.get('equity', 0))
@@ -338,14 +341,10 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
 
-        df = pd.DataFrame(ohlcv_data)
-        df['timestamp'] = pd.to_datetime(df['start'], unit='s')
+        df = pd.DataFrame(ohlcv_data, columns=['openTime', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df['timestamp'] = pd.to_datetime(df['openTime'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        df['open'] = df['open'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
-        df['close'] = df['close'].astype(float)
-        df['volume'] = df['volume'].astype(float)
+        df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
 
         # 기술 지표 추가
         df['SMA_50'] = ta.trend.SMAIndicator(close=df['close'], window=50).sma_indicator()
@@ -388,14 +387,10 @@ def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
 
-        df = pd.DataFrame(ohlcv_data)
-        df['timestamp'] = pd.to_datetime(df['start'], unit='s')
+        df = pd.DataFrame(ohlcv_data, columns=['openTime', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df['timestamp'] = pd.to_datetime(df['openTime'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        df['open'] = df['open'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
-        df['close'] = df['close'].astype(float)
-        df['volume'] = df['volume'].astype(float)
+        df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
 
         # 기술 지표 추가
         df['RSI'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
