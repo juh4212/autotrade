@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import pyupbit
 import pandas as pd
 import json
-from openai import OpenAI
+import openai
 import ta
 from ta.utils import dropna
 import time
