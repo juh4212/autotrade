@@ -1,4 +1,4 @@
-import os
+ㅍimport os
 import logging
 from pymongo import MongoClient, ASCENDING
 from dotenv import load_dotenv
@@ -341,8 +341,9 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
 
-        df = pd.DataFrame(ohlcv_data, columns=['openTime', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-        df['timestamp'] = pd.to_datetime(df['openTime'], unit='ms')
+        # 데이터 컬럼 지정
+        df = pd.DataFrame(ohlcv_data, columns=['start', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df['timestamp'] = pd.to_datetime(df['start'], unit='s')
         df.set_index('timestamp', inplace=True)
         df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
 
@@ -387,8 +388,9 @@ def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
             logger.error("OHLCV 데이터가 비어 있습니다.")
             return None
 
-        df = pd.DataFrame(ohlcv_data, columns=['openTime', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-        df['timestamp'] = pd.to_datetime(df['openTime'], unit='ms')
+        # 데이터 컬럼 지정
+        df = pd.DataFrame(ohlcv_data, columns=['start', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df['timestamp'] = pd.to_datetime(df['start'], unit='s')
         df.set_index('timestamp', inplace=True)
         df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
 
@@ -401,7 +403,7 @@ def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
         handle_error(e, "get_hourly_ohlcv 함수")
         return None
 
-# 이하 나머지 함수들도 필요에 따라 작성해주세요.
+# 이하 필요한 함수들을 추가로 작성해주세요 (예: request_ai_trading_decision, execute_trading_decision 등)
 
 if __name__ == "__main__":
     # MongoDB, Bybit 및 OpenAI 연결 설정
