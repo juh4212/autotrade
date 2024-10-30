@@ -206,7 +206,79 @@ def ai_trading():
     logger.info(f"AI 반성 내용: {reflection}")
 
     # 거래 결정 예시 로직 (추가적인 API 호출과 거래 실행 로직 포함 가능)
-    # 실제로 실행하기 전에 충분한 테스트와 검토가 필요합니다.
+    order_executed = False
+    decision_data = get_openai_response([{
+        "role": "user",
+        "content": f"현재 투자 상태: {json.dumps(filtered_balances)}\n호가 정보: {json.dumps(orderbook)}\n일간 OHLCV 데이터와 지표 (최근 60일): {df_daily_recent.to_json()}\n시간별 OHLCV 데이터와 지표 (최근 48시간): {df_hourly_recent.to_json()}\n"
+    }])
+
+    if decision_data:
+        try:
+            decision_json = json.loads(decision_data)
+            decision = decision_json.get('decision')
+            percentage = decision_json.get('percentage')
+            reason = decision_json.get('reason')
+
+            if decision == "매수":
+                my_krw = upbit.get_balance("KRW")
+                if my_krw is None:
+                    logger.error("KRW 잔고 조회에 실패하였습니다.")
+                    return
+                buy_amount = my_krw * (percentage / 100) * 0.9995  # 수수료 고려
+                if buy_amount > 5000:
+                    logger.info(f"매수 주문 실행: 보유 KRW의 {percentage}%")
+                    try:
+                        order = upbit.buy_market_order("KRW-BTC", buy_amount)
+                        if order:
+                            logger.info(f"매수 주문이 성공적으로 실행되었습니다: {order}")
+                            order_executed = True
+                        else:
+                            logger.error("매수 주문에 실패하였습니다.")
+                    except Exception as e:
+                        logger.error(f"매수 주문 실행 중 오류 발생: {e}")
+                else:
+                    logger.warning("매수 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
+            elif decision == "매도":
+                my_btc = upbit.get_balance("BTC")
+                if my_btc is None:
+                    logger.error("BTC 잔고 조회에 실패하였습니다.")
+                    return
+                sell_amount = my_btc * (percentage / 100)
+                current_price = pyupbit.get_current_price("KRW-BTC")
+                if sell_amount * current_price > 5000:
+                    logger.info(f"매도 주문 실행: 보유 BTC의 {percentage}%")
+                    try:
+                        order = upbit.sell_market_order("KRW-BTC", sell_amount)
+                        if order:
+                            logger.info(f"매도 주문이 성공적으로 실행되었습니다: {order}")
+                            order_executed = True
+                        else:
+                            logger.error("매도 주문에 실패하였습니다.")
+                    except Exception as e:
+                        logger.error(f"매도 주문 실행 중 오류 발생: {e}")
+                else:
+                    logger.warning("매도 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
+            elif decision == "보유":
+                logger.info("결정은 보유입니다. 아무 행동도 취하지 않습니다.")
+            else:
+                logger.error("AI로부터 유효하지 않은 결정을 받았습니다.")
+                return
+
+            # 거래 실행 여부와 관계없이 현재 잔고 조회
+            time.sleep(2)  # API 호출 제한을 고려하여 잠시 대기
+            balances = upbit.get_balances()
+            btc_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'BTC'), 0)
+            krw_balance = next((float(balance['balance']) for balance in balances if balance['currency'] == 'KRW'), 0)
+            btc_avg_buy_price = next((float(balance['avg_buy_price']) for balance in balances if balance['currency'] == 'BTC'), 0)
+            current_btc_price = pyupbit.get_current_price("KRW-BTC")
+
+            # 거래 기록을 MongoDB에 저장하기
+            log_trade(trades_collection, decision, percentage if order_executed else 0, reason, 
+                      btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
+        except json.JSONDecodeError as e:
+            logger.error(f"결정 데이터 파싱 중 오류 발생: {e}")
+        except Exception as e:
+            logger.error(f"거래 실행 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     # MongoDB 컬렉션 초기화
