@@ -281,8 +281,8 @@ def get_order_book(bybit, symbol="BTCUSDT", category="spot", limit=200):
         dict: 오더북 데이터 또는 None
     """
     try:
-        # 올바른 메서드 이름 사용: market_orderbook
-        response = bybit.market_orderbook(
+        # 올바른 메서드 이름 사용: get_orderbook
+        response = bybit.get_orderbook(
             category=category,
             symbol=symbol,
             limit=limit
@@ -321,6 +321,7 @@ def get_daily_ohlcv(bybit, symbol="BTCUSDT", interval="D", limit=100):
     """
     try:
         response = bybit.query_kline(
+            category="spot",  # category 추가
             symbol=symbol,
             interval=interval,
             limit=limit
@@ -366,6 +367,7 @@ def get_hourly_ohlcv(bybit, symbol="BTCUSDT", interval="60", limit=100):
     """
     try:
         response = bybit.query_kline(
+            category="spot",  # category 추가
             symbol=symbol,
             interval=interval,
             limit=limit
