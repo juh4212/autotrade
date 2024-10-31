@@ -3,13 +3,12 @@ from dotenv import load_dotenv
 import pyupbit
 import pandas as pd
 import json
-import openai
+from openai import OpenAI
 import ta
 from ta.utils import dropna
 import time
-import requests
 import logging
-from pymongo import MongoClient
+import sqlite3
 from datetime import datetime, timedelta
 import re
 import schedule
@@ -26,106 +25,102 @@ logger = logging.getLogger(__name__)
 access = os.getenv("UPBIT_ACCESS_KEY")
 secret = os.getenv("UPBIT_SECRET_KEY")
 if not access or not secret:
-    logger.error("API 키를 찾을 수 없습니다. .env 파일을 확인해주세요.")
-    raise ValueError("API 키가 없습니다. .env 파일을 확인해주세요.")
+    logger.error("API keys not found. Please check your .env file.")
+    raise ValueError("Missing API keys. Please check your .env file.")
 upbit = pyupbit.Upbit(access, secret)
 
-# MongoDB 데이터베이스 초기화 함수 - 거래 내역을 저장할 컬렉션을 생성
+# SQLite 데이터베이스 초기화 함수 - 거래 내역을 저장할 테이블을 생성
 def init_db():
-    client = MongoClient('mongodb://localhost:27017/')  # MongoDB 연결
-    db = client['bitcoin_trades_db']  # 데이터베이스 선택
-    trades_collection = db['trades']  # 컬렉션 선택
-    return trades_collection
+    conn = sqlite3.connect('bitcoin_trades.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS trades
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  timestamp TEXT,
+                  decision TEXT,
+                  percentage INTEGER,
+                  reason TEXT,
+                  btc_balance REAL,
+                  krw_balance REAL,
+                  btc_avg_buy_price REAL,
+                  btc_krw_price REAL,
+                  reflection TEXT)''')
+    conn.commit()
+    return conn
 
 # 거래 기록을 DB에 저장하는 함수
-def log_trade(trades_collection, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
-    trade_data = {
-        "timestamp": datetime.now().isoformat(),
-        "decision": decision,
-        "percentage": percentage,
-        "reason": reason,
-        "btc_balance": btc_balance,
-        "krw_balance": krw_balance,
-        "btc_avg_buy_price": btc_avg_buy_price,
-        "btc_krw_price": btc_krw_price,
-        "reflection": reflection
-    }
-    trades_collection.insert_one(trade_data)
+def log_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection=''):
+    c = conn.cursor()
+    timestamp = datetime.now().isoformat()
+    c.execute("""INSERT INTO trades 
+                 (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, reflection))
+    conn.commit()
 
 # 최근 투자 기록 조회
-def get_recent_trades(trades_collection, days=7):
-    seven_days_ago = datetime.now() - timedelta(days=days)
-    recent_trades_cursor = trades_collection.find({
-        "timestamp": {"$gte": seven_days_ago.isoformat()}
-    }).sort("timestamp", -1)
-    trades_df = pd.DataFrame(list(recent_trades_cursor))
-    if '_id' in trades_df.columns:
-        trades_df.drop(columns=['_id'], inplace=True)  # MongoDB의 기본 '_id' 필드 제거
-    return trades_df
+def get_recent_trades(conn, days=7):
+    c = conn.cursor()
+    seven_days_ago = (datetime.now() - timedelta(days=days)).isoformat()
+    c.execute("SELECT * FROM trades WHERE timestamp > ? ORDER BY timestamp DESC", (seven_days_ago,))
+    columns = [column[0] for column in c.description]
+    return pd.DataFrame.from_records(data=c.fetchall(), columns=columns)
 
 # 최근 투자 기록을 기반으로 퍼포먼스 계산 (초기 잔고 대비 최종 잔고)
 def calculate_performance(trades_df):
     if trades_df.empty:
         return 0  # 기록이 없을 경우 0%로 설정
-    # 초기 잔고 계산 (KRW + BTC * 당시 가격)
+    # 초기 잔고 계산 (KRW + BTC * 현재 가격)
     initial_balance = trades_df.iloc[-1]['krw_balance'] + trades_df.iloc[-1]['btc_balance'] * trades_df.iloc[-1]['btc_krw_price']
     # 최종 잔고 계산
     final_balance = trades_df.iloc[0]['krw_balance'] + trades_df.iloc[0]['btc_balance'] * trades_df.iloc[0]['btc_krw_price']
     return (final_balance - initial_balance) / initial_balance * 100
 
-# OpenAI API 호출 함수 (타임아웃 및 재시도 로직 포함)
-def get_openai_response(messages):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
-        logger.error("OpenAI API 키가 없거나 유효하지 않습니다.")
-        return None
-
-    retries = 3  # 최대 재시도 횟수
-    for i in range(retries):
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=messages,
-                timeout=60  # 타임아웃 설정 (초)
-            )
-            return response.choices[0].message.content
-        except openai.error.OpenAIError as e:
-            logger.error(f"OpenAI API 호출 중 오류 발생: {e}")
-            time.sleep(2 ** i)  # 지수 백오프 (재시도 전 대기)
-    return None
-
 # AI 모델을 사용하여 최근 투자 기록과 시장 데이터를 기반으로 분석 및 반성을 생성하는 함수
 def generate_reflection(trades_df, current_market_data):
     performance = calculate_performance(trades_df)  # 투자 퍼포먼스 계산
 
-    messages = [
-        {
-            "role": "user",
-            "content": "당신은 최근 거래 성과와 현재 시장 상황을 분석하여 향후 거래 결정을 위한 인사이트와 개선 사항을 생성하는 AI 트레이딩 어시스턴트입니다."
-        },
-        {
-            "role": "user",
-            "content": f"""
-최근 거래 데이터:
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    if not client.api_key:
+        logger.error("OpenAI API key is missing or invalid.")
+        return None
+
+    # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
+    response = client.chat.completions.create(
+        model="o1-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
+            },
+            {
+                "role": "user",
+                "content": f"""
+Recent trading data:
 {trades_df.to_json(orient='records')}
 
-현재 시장 데이터:
+Current market data:
 {current_market_data}
 
-지난 7일 동안의 전체 퍼포먼스: {performance:.2f}%
+Overall performance in the last 7 days: {performance:.2f}%
 
-이 데이터를 분석하고 다음을 제공해주세요:
-1. 최근 거래 결정에 대한 간단한 반성
-2. 잘된 점과 개선이 필요한 점에 대한 인사이트
-3. 향후 거래 결정을 위한 개선 제안
-4. 시장 데이터에서 발견한 패턴이나 트렌드
+Please analyze this data and provide:
+1. A brief reflection on the recent trading decisions
+2. Insights on what worked well and what didn't
+3. Suggestions for improvement in future trading decisions
+4. Any patterns or trends you notice in the market data
 
-응답은 250자 이내로 제한해주세요.
+Limit your response to 250 words or less.
 """
-        }
-    ]
+            }
+        ]
+    )
 
-    return get_openai_response(messages)
+    try:
+        response_content = response.choices[0].message.content
+        return response_content
+    except (IndexError, AttributeError) as e:
+        logger.error(f"Error extracting response content: {e}")
+        return None
 
 # 데이터프레임에 보조 지표를 추가하는 함수
 def add_indicators(df):
@@ -180,7 +175,7 @@ def ai_trading():
     df_daily = dropna(df_daily)
     df_daily = add_indicators(df_daily)
     
-    df_hourly = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=168)  # 7일간의 시간별 데이터
+    df_hourly = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=168)  # 7 days of hourly data
     df_hourly = dropna(df_hourly)
     df_hourly = add_indicators(df_hourly)
 
@@ -189,79 +184,172 @@ def ai_trading():
     df_hourly_recent = df_hourly.tail(48)
     
     ### AI에게 데이터 제공하고 판단 받기
-    logger.info("AI 분석을 위한 데이터 준비 중...")
-    trades_collection = init_db()
-    recent_trades = get_recent_trades(trades_collection)
-    current_market_data = {
-        "orderbook": orderbook,
-        "daily_ohlcv": df_daily_recent.to_dict(),
-        "hourly_ohlcv": df_hourly_recent.to_dict()
-    }
-    reflection = generate_reflection(recent_trades, current_market_data)
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    if not client.api_key:
+        logger.error("OpenAI API key is missing or invalid.")
+        return None
+    try:
+        # 데이터베이스 연결
+        with sqlite3.connect('bitcoin_trades.db') as conn:
+            # 최근 거래 내역 가져오기
+            recent_trades = get_recent_trades(conn)
+            
+            # 현재 시장 데이터 수집 (기존 코드에서 가져온 데이터 사용)
+            current_market_data = {
+                "orderbook": orderbook,
+                "daily_ohlcv": df_daily_recent.to_dict(),
+                "hourly_ohlcv": df_hourly_recent.to_dict()
+            }
+            
+            # 반성 및 개선 내용 생성
+            reflection = generate_reflection(recent_trades, current_market_data)
+            
+            # AI 모델에 반성 내용 제공
+            # Few-shot prompting으로 JSON 예시 추가
+            examples = """
+Example Response 1:
+{
+  "decision": "buy",
+  "percentage": 50,
+  "reason": "Based on the current market indicators, it's a good opportunity to invest."
 
-    if reflection is None:
-        logger.error("AI로부터 유효한 응답을 받지 못했습니다. 트레이딩 작업을 중단합니다.")
-        return
+}
 
-    logger.info(f"AI 반성 내용: {reflection}")
+Example Response 2:
+{
+  "decision": "sell",
+  "percentage": 30,
+  "reason": "Due to negative trends in the market, it is advisable to reduce holdings."
 
-    # 거래 결정 예시 로직 (추가적인 API 호출과 거래 실행 로직 포함 가능)
-    order_executed = False
-    decision_data = get_openai_response([{
-        "role": "user",
-        "content": f"현재 투자 상태: {json.dumps(filtered_balances)}\n호가 정보: {json.dumps(orderbook)}\n일간 OHLCV 데이터와 지표 (최근 60일): {df_daily_recent.to_json()}\n시간별 OHLCV 데이터와 지표 (최근 48시간): {df_hourly_recent.to_json()}\n"
-    }])
+}
 
-    if decision_data:
-        try:
-            decision_json = json.loads(decision_data)
-            decision = decision_json.get('decision')
-            percentage = decision_json.get('percentage')
-            reason = decision_json.get('reason')
+Example Response 3:
+{
+  "decision": "hold",
+  "percentage": 0,
+  "reason": "Market indicators are neutral; it's best to wait for a clearer signal."
 
-            if decision == "매수":
+}
+"""
+
+            response = client.chat.completions.create(
+                model="o1-preview",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"""You are an expert in Bitcoin investing. This analysis is performed every 4 hours. Analyze the provided data and determine whether to buy, sell, or hold at the current moment. Consider the following in your analysis:
+
+- Technical indicators and market data
+- Overall market sentiment
+- Recent trading performance and reflection
+
+Recent trading reflection:
+{reflection}
+
+Based on your analysis, make a decision and provide your reasoning.
+
+Please provide your response in the following JSON format:
+
+{examples}
+
+Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+Your percentage should reflect the strength of your conviction in the decision based on the analyzed data.
+"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Current investment status: {json.dumps(filtered_balances)}
+Orderbook: {json.dumps(orderbook)}
+Daily OHLCV with indicators (recent 60 days): {df_daily_recent.to_json()}
+Hourly OHLCV with indicators (recent 48 hours): {df_hourly_recent.to_json()}
+"""
+                    }
+                ]
+            )
+
+            response_text = response.choices[0].message.content
+
+            # AI 응답 파싱
+            def parse_ai_response(response_text):
+                try:
+                    # Extract JSON part from the response
+                    json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        # Parse JSON
+                        parsed_json = json.loads(json_str)
+                        decision = parsed_json.get('decision')
+                        percentage = parsed_json.get('percentage')
+                        reason = parsed_json.get('reason')
+                        return {'decision': decision, 'percentage': percentage, 'reason': reason}
+                    else:
+                        logger.error("No JSON found in AI response.")
+                        return None
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parsing error: {e}")
+                    return None
+
+            parsed_response = parse_ai_response(response_text)
+            if not parsed_response:
+                logger.error("Failed to parse AI response.")
+                return
+
+            decision = parsed_response.get('decision')
+            percentage = parsed_response.get('percentage')
+            reason = parsed_response.get('reason')
+
+            if not decision or reason is None:
+                logger.error("Incomplete data in AI response.")
+                return
+
+            logger.info(f"AI Decision: {decision.upper()}")
+            logger.info(f"Percentage: {percentage}")
+            logger.info(f"Decision Reason: {reason}")
+
+            order_executed = False
+
+            if decision == "buy":
                 my_krw = upbit.get_balance("KRW")
                 if my_krw is None:
-                    logger.error("KRW 잔고 조회에 실패하였습니다.")
+                    logger.error("Failed to retrieve KRW balance.")
                     return
                 buy_amount = my_krw * (percentage / 100) * 0.9995  # 수수료 고려
                 if buy_amount > 5000:
-                    logger.info(f"매수 주문 실행: 보유 KRW의 {percentage}%")
+                    logger.info(f"Buy Order Executed: {percentage}% of available KRW")
                     try:
                         order = upbit.buy_market_order("KRW-BTC", buy_amount)
                         if order:
-                            logger.info(f"매수 주문이 성공적으로 실행되었습니다: {order}")
+                            logger.info(f"Buy order executed successfully: {order}")
                             order_executed = True
                         else:
-                            logger.error("매수 주문에 실패하였습니다.")
+                            logger.error("Buy order failed.")
                     except Exception as e:
-                        logger.error(f"매수 주문 실행 중 오류 발생: {e}")
+                        logger.error(f"Error executing buy order: {e}")
                 else:
-                    logger.warning("매수 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
-            elif decision == "매도":
-                my_btc = upbit.get_balance("BTC")
+                    logger.warning("Buy Order Failed: Insufficient KRW (less than 5000 KRW)")
+            elif decision == "sell":
+                my_btc = upbit.get_balance("KRW-BTC")
                 if my_btc is None:
-                    logger.error("BTC 잔고 조회에 실패하였습니다.")
+                    logger.error("Failed to retrieve BTC balance.")
                     return
                 sell_amount = my_btc * (percentage / 100)
                 current_price = pyupbit.get_current_price("KRW-BTC")
                 if sell_amount * current_price > 5000:
-                    logger.info(f"매도 주문 실행: 보유 BTC의 {percentage}%")
+                    logger.info(f"Sell Order Executed: {percentage}% of held BTC")
                     try:
                         order = upbit.sell_market_order("KRW-BTC", sell_amount)
                         if order:
-                            logger.info(f"매도 주문이 성공적으로 실행되었습니다: {order}")
                             order_executed = True
                         else:
-                            logger.error("매도 주문에 실패하였습니다.")
+                            logger.error("Sell order failed.")
                     except Exception as e:
-                        logger.error(f"매도 주문 실행 중 오류 발생: {e}")
+                        logger.error(f"Error executing sell order: {e}")
                 else:
-                    logger.warning("매도 주문 실패: 잔고가 부족합니다 (5,000 KRW 미만)")
-            elif decision == "보유":
-                logger.info("결정은 보유입니다. 아무 행동도 취하지 않습니다.")
+                    logger.warning("Sell Order Failed: Insufficient BTC (less than 5000 KRW worth)")
+            elif decision == "hold":
+                logger.info("Decision is to hold. No action taken.")
             else:
-                logger.error("AI로부터 유효하지 않은 결정을 받았습니다.")
+                logger.error("Invalid decision received from AI.")
                 return
 
             # 거래 실행 여부와 관계없이 현재 잔고 조회
@@ -272,17 +360,16 @@ def ai_trading():
             btc_avg_buy_price = next((float(balance['avg_buy_price']) for balance in balances if balance['currency'] == 'BTC'), 0)
             current_btc_price = pyupbit.get_current_price("KRW-BTC")
 
-            # 거래 기록을 MongoDB에 저장하기
-            log_trade(trades_collection, decision, percentage if order_executed else 0, reason, 
+            # 거래 기록을 DB에 저장하기
+            log_trade(conn, decision, percentage if order_executed else 0, reason, 
                       btc_balance, krw_balance, btc_avg_buy_price, current_btc_price, reflection)
-        except json.JSONDecodeError as e:
-            logger.error(f"결정 데이터 파싱 중 오류 발생: {e}")
-        except Exception as e:
-            logger.error(f"거래 실행 중 오류 발생: {e}")
+    except sqlite3.Error as e:
+        logger.error(f"Database connection error: {e}")
+        return
 
 if __name__ == "__main__":
-    # MongoDB 컬렉션 초기화
-    trades_collection = init_db()
+    # 데이터베이스 초기화
+    init_db()
 
     # 중복 실행 방지를 위한 변수
     trading_in_progress = False
@@ -291,13 +378,13 @@ if __name__ == "__main__":
     def job():
         global trading_in_progress
         if trading_in_progress:
-            logger.warning("트레이딩 작업이 이미 진행 중입니다. 이번 실행은 건너뜁니다.")
+            logger.warning("Trading job is already in progress, skipping this run.")
             return
         try:
             trading_in_progress = True
             ai_trading()
         except Exception as e:
-            logger.error(f"오류 발생: {e}")
+            logger.error(f"An error occurred: {e}")
         finally:
             trading_in_progress = False
 
