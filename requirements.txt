@@ -8,3 +8,4 @@ openai
 discord.py
 APScheduler
 pymongo
+jwt
