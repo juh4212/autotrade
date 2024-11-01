@@ -51,7 +51,7 @@ if __name__ == "__main__":
     import time
 
     # Discord 봇을 별도의 스레드에서 실행
-    discord_thread = threading.Thread(target=run_discord_bot)
+    discord_thread = threading.Thread(target=run_discord_bot, daemon=True)
     discord_thread.start()
 
     # 봇이 준비될 시간을 대기
@@ -59,4 +59,3 @@ if __name__ == "__main__":
 
     # 테스트 메시지 전송
     notify_discord("자동매매 봇이 시작되었습니다!")
-
