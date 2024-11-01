@@ -63,9 +63,8 @@ def get_ai_decision(market_data, trade_analysis, fear_greed_index):
 
 # 테스트용 호출
 if __name__ == "__main__":
-    from data_collection import get_market_data, get_order_history
+    from data_collection import get_market_data, get_order_history, get_fear_greed_index
     from data_processing import add_technical_indicators, analyze_recent_trades
-    from data_collection import get_fear_greed_index
 
     df = get_market_data()
     df = add_technical_indicators(df)
@@ -76,4 +75,3 @@ if __name__ == "__main__":
     decision, reason = get_ai_decision(df, analysis, fg_index)
     print(f"결정: {decision}")
     print(f"이유: {reason}")
-
