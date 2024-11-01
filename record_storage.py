@@ -1,68 +1,45 @@
-# record_storage.py
+# data_storage.py
 
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 import os
-import json
-from dotenv import load_dotenv
-from datetime import datetime
+import logging
+import time
 
-# 환경 변수 로드
-load_dotenv()
-
-MONGODB_URI = os.getenv('MONGODB_URI')
+# 환경 변수에서 MongoDB URI 가져오기
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://mongo:27017/autotrade_db')
 
 # MongoDB 클라이언트 설정
-client = MongoClient(MONGODB_URI)
-db = client.trading_db  # 데이터베이스 이름
-trade_records_col = db.trade_records
-investment_performance_col = db.investment_performance
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 
-def save_trade_record(symbol, side, qty, price, order_type, status, response):
-    """
-    거래 내역을 MongoDB에 저장합니다.
-    """
+try:
+    # 서버 연결 확인
+    client.admin.command('ping')
+    logging.info('MongoDB에 성공적으로 연결되었습니다.')
+except errors.ConnectionFailure:
+    logging.error('MongoDB에 연결할 수 없습니다: disconnected')
+except Exception as e:
+    logging.error(f'MongoDB 연결 중 에러 발생: {e}')
+
+db = client.autotrade_db
+
+# 컬렉션 설정
+trade_records = db.trade_records
+investment_performance = db.investment_performance
+
+def save_trade_record(record):
     try:
-        record = {
-            "timestamp": datetime.utcnow(),
-            "symbol": symbol,
-            "side": side,
-            "qty": qty,
-            "price": price,
-            "order_type": order_type,
-            "status": status,
-            "response": response
-        }
-        trade_records_col.insert_one(record)
+        trade_records.insert_one(record)
+        logging.info("거래 기록이 MongoDB에 저장되었습니다.")
+    except errors.PyMongoError as e:
+        logging.error(f"MongoDB에 거래 기록 저장 중 에러 발생: {e}")
     except Exception as e:
-        print(f"거래 기록 저장 에러: {e}")
+        logging.error(f"예기치 않은 에러 발생: {e}")
 
-def save_investment_performance(total_trades, profitable_trades, win_rate):
-    """
-    투자 성과를 MongoDB에 저장합니다.
-    """
+def save_investment_performance_record(record):
     try:
-        performance = {
-            "timestamp": datetime.utcnow(),
-            "total_trades": total_trades,
-            "profitable_trades": profitable_trades,
-            "win_rate": win_rate
-        }
-        investment_performance_col.insert_one(performance)
+        investment_performance.insert_one(record)
+        logging.info("투자 성과 기록이 MongoDB에 저장되었습니다.")
+    except errors.PyMongoError as e:
+        logging.error(f"MongoDB에 투자 성과 기록 저장 중 에러 발생: {e}")
     except Exception as e:
-        print(f"투자 성과 저장 에러: {e}")
-
-# 테스트용 호출
-if __name__ == "__main__":
-    # 거래 기록 저장 테스트
-    test_order = {
-        "order_id": "123456",
-        "symbol": "BTCUSD",
-        "side": "Buy",
-        "qty": 1,
-        "price": 50000,
-        "status": "Filled"
-    }
-    save_trade_record("BTCUSD", "Buy", 1, 50000, "Market", "Filled", test_order)
-
-    # 투자 성과 저장 테스트
-    save_investment_performance(10, 7, 70.0)
+        logging.error(f"예기치 않은 에러 발생: {e}")
