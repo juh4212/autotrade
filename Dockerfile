@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 애플리케이션 코드 복사
 COPY . .
 
-# logs 디렉토리 생성
-RUN mkdir -p logs
+# logs 디렉토리 생성 및 권한 설정
+RUN mkdir -p logs && chmod -R 777 logs
 
 # 애플리케이션 실행
 CMD ["python", "main.py"]
