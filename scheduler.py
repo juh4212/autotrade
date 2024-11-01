@@ -12,9 +12,10 @@ from record_storage import save_trade_record, save_investment_performance
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
 from discord_bot import notify_discord
 
-# 로그 디렉토리 생성
+# 로그 디렉토리 생성 및 권한 설정
 LOG_DIR = 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
+os.chmod(LOG_DIR, 0o777)  # 개발 단계에서는 777, 운영 환경에서는 최소 권한 부여
 
 # 로깅 설정
 logging.basicConfig(
