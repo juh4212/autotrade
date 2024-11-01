@@ -7,7 +7,7 @@ import time
 import logging
 import os
 
-# 로그 디렉토리 생성 (권한 변경 제거)
+# 로그 디렉토리 생성
 LOG_DIR = 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
 
