@@ -1,61 +1,55 @@
 # discord_bot.py
 
 import discord
-from discord.ext import commands
-import asyncio
+import logging
 import os
-from dotenv import load_dotenv
+import asyncio
 
-# 환경 변수 로드
-load_dotenv()
-
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))  # 알림을 보낼 채널 ID
-
-# Discord 클라이언트 설정
+# Discord Intents 설정
 intents = discord.Intents.default()
-intents.message_content = True
+intents.messages = True  # 필요에 따라 활성화
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+# Discord 클라이언트 초기화
+client = discord.Client(intents=intents)
 
-@bot.event
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,  # 로그 수준 설정
+    format='%(asctime)s:%(levelname)s:%(message)s',
+    handlers=[
+        logging.StreamHandler()  # 콘솔에 로그 출력
+    ]
+)
+
+@client.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
+    logging.info('연결되었습니다! (사용자: {0.user})')
 
-async def send_discord_message(message):
-    """
-    지정된 Discord 채널로 메시지를 전송합니다.
-    """
-    try:
-        channel = bot.get_channel(DISCORD_CHANNEL_ID)
-        if channel:
-            await channel.send(message)
-        else:
-            print(f"채널을 찾을 수 없습니다: {DISCORD_CHANNEL_ID}")
-    except Exception as e:
-        print(f"Discord 메시지 전송 에러: {e}")
+@client.event
+async def on_disconnect():
+    logging.warning('연결이 끊겼습니다!')
+
+@client.event
+async def on_error(event, *args, **kwargs):
+    logging.error(f'이벤트 "{event}" 처리 중 에러 발생', exc_info=True)
+
+async def run_bot():
+    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리
+    if not token:
+        logging.error('DISCORD_BOT_TOKEN 환경 변수가 설정되지 않았습니다.')
+        return
+    while True:
+        try:
+            await client.start(token)
+        except discord.ConnectionClosed as e:
+            logging.warning(f'Discord 봇 연결이 끊겼습니다: {e}')
+            await asyncio.sleep(5)  # 재연결 전에 잠시 대기
+        except Exception as e:
+            logging.error(f'Discord 봇 실행 중 에러 발생: {e}')
+            await asyncio.sleep(5)  # 재연결 전에 잠시 대기
 
 def run_discord_bot():
-    """
-    Discord 봇을 실행합니다.
-    """
-    bot.run(DISCORD_TOKEN)
+    asyncio.run(run_bot())
 
-# notify_discord 함수은 다른 모듈에서 호출할 수 있도록 합니다.
-def notify_discord(message):
-    asyncio.run_coroutine_threadsafe(send_discord_message(message), bot.loop)
-
-# 테스트용 호출
 if __name__ == "__main__":
-    import threading
-    import time
-
-    # Discord 봇을 별도의 스레드에서 실행
-    discord_thread = threading.Thread(target=run_discord_bot, daemon=True)
-    discord_thread.start()
-
-    # 봇이 준비될 시간을 대기
-    time.sleep(5)
-
-    # 테스트 메시지 전송
-    notify_discord("자동매매 봇이 시작되었습니다!")
+    run_discord_bot()
