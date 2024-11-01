@@ -27,6 +27,7 @@ def job():
         df = get_market_data()
         if df.empty:
             logging.warning("시장 데이터가 비어 있습니다.")
+            notify_discord("시장 데이터가 비어 있습니다.")
             return
         df = add_technical_indicators(df)
         access_key = os.getenv('BYBIT_API_KEY')
@@ -107,4 +108,3 @@ def scheduler_job():
 # 테스트용 호출
 if __name__ == "__main__":
     scheduler_job()
-
