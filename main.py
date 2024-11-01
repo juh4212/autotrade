@@ -5,10 +5,15 @@ from discord_bot import run_discord_bot, notify_discord
 from scheduler import scheduler_job
 import time
 import logging
+import os
 
-# 로깅 설정 (이미 scheduler.py에서도 설정됨)
+# 로그 디렉토리 생성 (이미 scheduler.py에서 생성했지만, 안전을 위해 여기에도 추가)
+LOG_DIR = 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# 로깅 설정 (중복 설정 방지)
 logging.basicConfig(
-    filename='logs/trading_bot.log',
+    filename=os.path.join(LOG_DIR, 'trading_bot.log'),
     level=logging.INFO,
     format='%(asctime)s:%(levelname)s:%(message)s'
 )
