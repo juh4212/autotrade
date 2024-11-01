@@ -16,5 +16,12 @@ COPY . .
 # logs 디렉토리 생성 및 권한 설정
 RUN mkdir -p logs && chmod -R 755 logs
 
+# 비-루트 사용자 생성 및 소유권 설정
+RUN adduser --disabled-password myuser
+RUN chown -R myuser:myuser logs
+
+# 비-루트 사용자로 전환
+USER myuser
+
 # 애플리케이션 실행
 CMD ["python", "main.py"]
