@@ -7,11 +7,12 @@ import time
 import logging
 import os
 
-# 로그 디렉토리 생성 (이미 scheduler.py에서 생성했지만, 안전을 위해 여기에도 추가)
+# 로그 디렉토리 생성 및 권한 설정
 LOG_DIR = 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
+os.chmod(LOG_DIR, 0o777)  # 개발 단계에서는 777, 운영 환경에서는 최소 권한 부여
 
-# 로깅 설정 (중복 설정 방지)
+# 로깅 설정
 logging.basicConfig(
     filename=os.path.join(LOG_DIR, 'trading_bot.log'),
     level=logging.INFO,
