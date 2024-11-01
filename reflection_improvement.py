@@ -62,4 +62,3 @@ if __name__ == "__main__":
     print(f"반성 및 개선점:\n{reflection}")
 
     apply_improvements(reflection)
-
