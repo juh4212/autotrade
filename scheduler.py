@@ -1,5 +1,7 @@
 # scheduler.py
 
+import os
+import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 import time
 from data_collection import get_market_data, get_order_history, get_fear_greed_index
@@ -9,12 +11,14 @@ from trade_execution import place_order
 from record_storage import save_trade_record, save_investment_performance
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
 from discord_bot import notify_discord
-import os
-import logging
+
+# 로그 디렉토리 생성
+LOG_DIR = 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
 
 # 로깅 설정
 logging.basicConfig(
-    filename='logs/trading_bot.log',
+    filename=os.path.join(LOG_DIR, 'trading_bot.log'),
     level=logging.INFO,
     format='%(asctime)s:%(levelname)s:%(message)s'
 )
