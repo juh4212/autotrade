@@ -4,12 +4,7 @@ import requests
 import pandas as pd
 from bybit import bybit
 import os
-import jwt
-import uuid
-import hashlib
-import hmac
 import json
-from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -74,4 +69,3 @@ if __name__ == "__main__":
 
     fg_index = get_fear_greed_index()
     print(f"공포 탐욕 지수: {fg_index}")
-
