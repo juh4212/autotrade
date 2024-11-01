@@ -5,18 +5,12 @@ from discord_bot import run_discord_bot, notify_discord
 from scheduler import scheduler_job
 import time
 import logging
-import os
 
-# 로그 디렉토리 생성
-LOG_DIR = 'logs'
-os.makedirs(LOG_DIR, exist_ok=True)
-
-# 로깅 설정 (파일 핸들러와 콘솔 핸들러 모두 사용)
+# 로깅 설정 (콘솔 핸들러만 사용)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, 'trading_bot.log')),
         logging.StreamHandler()
     ]
 )
