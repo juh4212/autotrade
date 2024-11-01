@@ -12,16 +12,18 @@ from record_storage import save_trade_record, save_investment_performance
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
 from discord_bot import notify_discord
 
-# 로그 디렉토리 생성 및 권한 설정
+# 로그 디렉토리 생성 (권한 변경 제거)
 LOG_DIR = 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
-os.chmod(LOG_DIR, 0o777)  # 개발 단계에서는 777, 운영 환경에서는 최소 권한 부여
 
-# 로깅 설정
+# 로깅 설정 (파일 핸들러와 콘솔 핸들러 모두 사용)
 logging.basicConfig(
-    filename=os.path.join(LOG_DIR, 'trading_bot.log'),
     level=logging.INFO,
-    format='%(asctime)s:%(levelname)s:%(message)s'
+    format='%(asctime)s:%(levelname)s:%(message)s',
+    handlers=[
+        logging.FileHandler(os.path.join(LOG_DIR, 'trading_bot.log')),
+        logging.StreamHandler()
+    ]
 )
 
 def job():
@@ -35,8 +37,6 @@ def job():
             notify_discord("시장 데이터가 비어 있습니다.")
             return
         df = add_technical_indicators(df)
-        access_key = os.getenv('BYBIT_API_KEY')
-        secret_key = os.getenv('BYBIT_API_SECRET')
         symbol = "BTCUSD"
         orders = get_order_history(symbol=symbol, limit=100)
         analysis = analyze_recent_trades(orders)
