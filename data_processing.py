@@ -43,8 +43,14 @@ def analyze_recent_trades(trade_history):
         df['created_at'] = pd.to_datetime(df['created_at'])
         df = df.sort_values(by='created_at', ascending=False)
 
-        # 수익성 있는 거래 수 계산 (이 예제에서는 'profit' 필드가 있다고 가정)
-        profitable_trades = df[df['profit'] > 0]
+        # Bybit의 주문 응답에는 'profit' 필드가 없으므로, 수익성 계산을 위해 추가 로직 필요
+        # 예시: 체결 가격과 주문 타입을 기반으로 간단한 수익성 계산
+        # 실제 구현 시, 포지션 관리 및 수익 계산 로직을 정교하게 설계해야 합니다.
+
+        # 임시로 수익성 있는 거래 수를 랜덤으로 설정 (실제 수익 계산 로직 필요)
+        # 여기서는 'price'가 특정 기준 이상일 경우 수익성 있다고 가정
+        # 실제 거래 전략에 맞게 수정 필요
+        profitable_trades = df[df['price'] > 50000]  # 예시 기준
         total_trades = len(df)
         profitable_count = len(profitable_trades)
         win_rate = (profitable_count / total_trades) * 100 if total_trades > 0 else 0.0
@@ -64,7 +70,7 @@ def analyze_recent_trades(trade_history):
 
 # 테스트용 호출
 if __name__ == "__main__":
-    from data_collection import get_market_data, get_order_history
+    from data_collection import get_market_data, get_order_history, get_fear_greed_index
 
     df = get_market_data()
     df = add_technical_indicators(df)
@@ -73,4 +79,3 @@ if __name__ == "__main__":
     orders = get_order_history()
     analysis = analyze_recent_trades(orders)
     print(analysis)
-
