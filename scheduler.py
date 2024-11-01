@@ -10,18 +10,14 @@ from ai_judgment import get_ai_decision
 from trade_execution import place_order
 from record_storage import save_trade_record, save_investment_performance
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
-from discord_bot import notify_discord
+from discord_bot import notify_discord  # 수정된 부분
+from data_storage import save_trade_record as save_trade_record_mongo, save_investment_performance_record
 
-# 로그 디렉토리 생성
-LOG_DIR = 'logs'
-os.makedirs(LOG_DIR, exist_ok=True)
-
-# 로깅 설정 (파일 핸들러와 콘솔 핸들러 모두 사용)
+# 로깅 설정 (콘솔 핸들러만 사용)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, 'trading_bot.log')),
         logging.StreamHandler()
     ]
 )
@@ -64,24 +60,28 @@ def job():
         else:
             order = None
 
-        # 기록 저장
+        # 기록 저장 (MongoDB)
         if order and 'result' in order:
-            save_trade_record(
-                symbol=symbol,
-                side="Buy" if decision == "buy" else "Sell",
-                qty=qty if decision in ["buy", "sell"] else None,
-                price=order['result']['price'] if 'price' in order['result'] else None,
-                order_type=order['result']['order_type'] if 'order_type' in order['result'] else "Market",
-                status=order['result']['order_status'] if 'order_status' in order['result'] else "Unknown",
-                response=order
-            )
+            record = {
+                "symbol": symbol,
+                "side": "Buy" if decision == "buy" else "Sell",
+                "qty": qty if decision in ["buy", "sell"] else None,
+                "price": order['result']['price'] if 'price' in order['result'] else None,
+                "order_type": order['result']['order_type'] if 'order_type' in order['result'] else "Market",
+                "status": order['result']['order_status'] if 'order_status' in order['result'] else "Unknown",
+                "response": order,
+                "timestamp": time.time()
+            }
+            save_trade_record_mongo(record)
 
-        # 투자 성과 저장
-        save_investment_performance(
-            total_trades=analysis['total_trades'],
-            profitable_trades=analysis['profitable_trades'],
-            win_rate=analysis['win_rate']
-        )
+        # 투자 성과 저장 (MongoDB)
+        performance_record = {
+            "total_trades": analysis['total_trades'],
+            "profitable_trades": analysis['profitable_trades'],
+            "win_rate": analysis['win_rate'],
+            "timestamp": time.time()
+        }
+        save_investment_performance_record(performance_record)
 
         # 반성 및 개선
         reflection = get_reflection_and_improvement(analysis)
