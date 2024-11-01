@@ -1,4 +1,4 @@
-=# scheduler.py
+# scheduler.py
 
 import os
 import logging
