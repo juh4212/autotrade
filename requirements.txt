@@ -9,4 +9,4 @@ discord.py
 APScheduler
 SQLAlchemy
 psycopg2-binary
-
+PyJWT
