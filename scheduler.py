@@ -1,4 +1,4 @@
-# scheduler.py
+=# scheduler.py
 
 import os
 import logging
@@ -12,7 +12,7 @@ from record_storage import save_trade_record, save_investment_performance
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
 from discord_bot import notify_discord
 
-# 로그 디렉토리 생성 (권한 변경 제거)
+# 로그 디렉토리 생성
 LOG_DIR = 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -98,8 +98,8 @@ def job():
 
 def scheduler_job():
     scheduler = BackgroundScheduler()
-    # 예: 매일 오전 9시에 실행
-    scheduler.add_job(job, 'cron', hour=9, minute=0)
+    # 작업을 10분마다 실행하도록 설정
+    scheduler.add_job(job, 'interval', minutes=10)
     scheduler.start()
     logging.info("스케줄러 시작")
 
