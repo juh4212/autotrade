@@ -87,10 +87,10 @@ if __name__ == "__main__":
     decision = "buy"  # 'buy', 'sell', 'close', 'hold'
 
     if decision == "buy":
-        qty = 1  # 구매할 수량 설정
+        qty = 1  # 구매할 수량 설정 (예: 1 BTC)
         order = place_order(symbol, "Buy", qty=qty, order_type="Market")
     elif decision == "sell":
-        qty = 1  # 판매할 수량 설정
+        qty = 1  # 판매할 수량 설정 (예: 1 BTC)
         order = place_order(symbol, "Sell", qty=qty, order_type="Market")
     elif decision == "close":
         position = get_position(symbol)
@@ -103,4 +103,3 @@ if __name__ == "__main__":
         order = None
 
     print(order)
-
