@@ -7,6 +7,6 @@ ta
 openai
 discord.py
 APScheduler
-SQLAlchemy
 psycopg2-binary
 PyJWT
+pymongo
