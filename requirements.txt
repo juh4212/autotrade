@@ -1,1 +1,12 @@
+requests
+bybit
+python-dotenv
+beautifulsoup4
+pandas
+ta
+openai
+discord.py
+APScheduler
+SQLAlchemy
+psycopg2-binary
 
