@@ -35,7 +35,9 @@ def get_fear_greed_index():
 # 나머지 데이터 수집 함수들
 def get_market_data():
     # 시장 데이터 수집 로직 구현
-    pass
+    # 예시로 빈 DataFrame 반환
+    import pandas as pd
+    return pd.DataFrame()
 
 def get_order_history(symbol, limit=100):
     if bybit_client:
