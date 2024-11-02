@@ -72,8 +72,8 @@ async def send_balance_message():
         return
     
     try:
-        # 잔고 정보 가져오기 (예: USDT 잔고)
-        response = bybit_client.get_wallet_balance(coin="USDT")
+        # 잔고 정보 가져오기 (예: USDT 잔고, accountType='CONTRACT')
+        response = bybit_client.get_wallet_balance(coin="USDT", accountType="CONTRACT")
         if response["ret_code"] == 0:
             usdt_balance = response["result"]["USDT"]["available_balance"]
             balance_info = f"현재 잔고: {usdt_balance} USDT"
