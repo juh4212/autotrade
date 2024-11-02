@@ -8,10 +8,9 @@ from data_collection import get_market_data, get_order_history, get_fear_greed_i
 from data_processing import add_technical_indicators, analyze_recent_trades
 from ai_judgment import get_ai_decision
 from trade_execution import place_order
-from record_storage import save_trade_record, save_investment_performance
+from record_storage import save_trade_record, save_investment_performance  # 수정된 부분
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
-from discord_bot import notify_discord  # 수정된 부분
-from data_storage import save_trade_record as save_trade_record_mongo, save_investment_performance_record
+from discord_bot import notify_discord
 
 # 로깅 설정 (콘솔 핸들러만 사용)
 logging.basicConfig(
@@ -72,7 +71,7 @@ def job():
                 "response": order,
                 "timestamp": time.time()
             }
-            save_trade_record_mongo(record)
+            save_trade_record(record)
 
         # 투자 성과 저장 (MongoDB)
         performance_record = {
@@ -81,7 +80,7 @@ def job():
             "win_rate": analysis['win_rate'],
             "timestamp": time.time()
         }
-        save_investment_performance_record(performance_record)
+        save_investment_performance(performance_record)
 
         # 반성 및 개선
         reflection = get_reflection_and_improvement(analysis)
