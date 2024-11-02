@@ -1,3 +1,5 @@
+# discord_bot.py
+
 import discord
 import logging
 import os
@@ -32,6 +34,7 @@ async def on_ready():
     logging.info(f'연결되었습니다! (사용자: {client.user})')
     if DISCORD_CHANNEL_ID:
         await send_message('연결되었습니다!')
+    await list_channels()  # 모든 채널 목록 출력
 
 @client.event
 async def on_disconnect():
@@ -60,8 +63,14 @@ def notify_discord(message):
     else:
         logging.warning('Discord 봇이 준비되지 않았거나, DISCORD_CHANNEL_ID가 설정되지 않았습니다.')
 
+async def list_channels():
+    for guild in client.guilds:
+        logging.info(f'서버: {guild.name} (ID: {guild.id})')
+        for channel in guild.text_channels:
+            logging.info(f' - 채널: {channel.name} (ID: {channel.id})')
+
 async def run_bot():
-    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리하는 것을 권장
+    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리
     if not token:
         logging.error('DISCORD_BOT_TOKEN 환경 변수가 설정되지 않았습니다.')
         return
