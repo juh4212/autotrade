@@ -58,22 +58,34 @@ def get_wallet_balance():
             logging.debug(f"get_wallet_balance response: {response}")  # 디버그용 로그 추가
 
             if response.get("retCode") == 0:
-                balances = response["result"]["balances"]
-                usdt_balance = None
-                for balance in balances:
-                    if balance["coin"] == "USDT":
-                        usdt_balance = balance["available"]
-                        break
-                if usdt_balance is not None:
-                    return usdt_balance
+                result = response.get("result")
+                if result and "balances" in result:
+                    balances = result["balances"]
+                    usdt_balance = None
+                    for balance in balances:
+                        if balance["coin"] == "USDT":
+                            usdt_balance = balance["available"]
+                            break
+                    if usdt_balance is not None:
+                        return usdt_balance
+                    else:
+                        logging.error("USDT 잔고 정보를 찾을 수 없습니다.")
+                        return None
                 else:
-                    logging.error("USDT 잔고 정보를 찾을 수 없습니다.")
+                    error_msg = "balances 키가 응답에 포함되지 않았습니다."
+                    logging.error(error_msg)
                     return None
             else:
-                logging.error(f"잔고 정보 가져오기 실패: {response.get('retMsg')}")
+                error_msg = f"잔고 정보 가져오기 실패: {response.get('retMsg')}"
+                logging.error(error_msg)
                 return None
+        except KeyError as ke:
+            error_msg = f"잔고 정보 파싱 중 KeyError 발생: {ke}"
+            logging.error(error_msg)
+            return None
         except Exception as e:
-            logging.error(f"잔고 정보 가져오기 중 에러 발생: {e}")
+            error_msg = f"잔고 정보 가져오기 중 에러 발생: {e}"
+            logging.error(error_msg)
             return None
     else:
         logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
