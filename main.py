@@ -1,9 +1,16 @@
 # main.py
 
 import logging
-import threading
-from discord_bot import run_discord_bot_thread
-from scheduler import scheduler_job
+import asyncio
+from discord_bot import run_discord_bot, run_discord_bot_thread
+from scheduler import start_scheduler
+
+async def main():
+    # 스케줄러 시작
+    start_scheduler()
+
+    # Discord 봇 시작
+    await run_discord_bot()
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -13,11 +20,10 @@ if __name__ == "__main__":
             logging.StreamHandler()
         ]
     )
-    
-    # 스케줄러를 별도의 스레드에서 실행
-    scheduler_thread = threading.Thread(target=scheduler_job, daemon=True)
-    scheduler_thread.start()
-    logging.info("스케줄러가 별도의 스레드에서 시작되었습니다.")
-    
-    # Discord 봇 실행
-    run_discord_bot_thread()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("프로그램이 종료되었습니다.")
+    except Exception as e:
+        logging.error(f"메인 실행 중 에러 발생: {e}")
