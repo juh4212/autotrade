@@ -1,5 +1,3 @@
-# discord_bot.py
-
 import discord
 import logging
 import os
@@ -50,8 +48,11 @@ async def send_message(message):
     if DISCORD_CHANNEL_ID:
         channel = client.get_channel(DISCORD_CHANNEL_ID)
         if channel:
-            await channel.send(message)
-            logging.info(f'메시지 전송: {message}')
+            try:
+                await channel.send(message)
+                logging.info(f'메시지 전송: {message}')
+            except Exception as e:
+                logging.error(f'메시지 전송 실패: {e}')
         else:
             logging.error(f'채널 ID {DISCORD_CHANNEL_ID}을 찾을 수 없습니다.')
     else:
