@@ -70,7 +70,7 @@ async def send_balance_message():
     if not bybit_client:
         logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
         return
-    
+
     try:
         # 잔고 정보 가져오기 (예: USDT 잔고, accountType='CONTRACT')
         response = bybit_client.get_wallet_balance(coin="USDT", accountType="CONTRACT")
@@ -95,14 +95,17 @@ async def send_balance_message():
             else:
                 error_msg = "balances 키가 응답에 포함되지 않았습니다."
                 logging.error(error_msg)
+                logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
                 await send_message(error_msg)
         else:
             error_msg = f"잔고 정보 가져오기 실패: {response.get('retMsg')}"
             logging.error(error_msg)
+            logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
             await send_message(error_msg)
     except KeyError as ke:
         error_msg = f"잔고 정보 파싱 중 KeyError 발생: {ke}"
         logging.error(error_msg)
+        logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
         await send_message(error_msg)
     except Exception as e:
         error_msg = f"잔고 정보 가져오기 중 에러 발생: {e}"
