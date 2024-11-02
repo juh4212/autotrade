@@ -12,6 +12,8 @@ services:
     depends_on:
       - mongo
     restart: unless-stopped
+    # 명시적으로 scheduler.py 실행 (선택 사항)
+    # command: ["python", "scheduler.py"]
 
   mongo:
     image: mongo:5.0
@@ -22,7 +24,7 @@ services:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=securepassword
     ports:
-      - "27017:27017"  # 호스트와 컨테이너 간 포트 매핑
+      - "27017:27017"
     restart: unless-stopped
 
 volumes:
