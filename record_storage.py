@@ -1,4 +1,4 @@
-# data_storage.py
+# record_storage.py
 
 from pymongo import MongoClient, errors
 import os
@@ -27,6 +27,9 @@ trade_records = db.trade_records
 investment_performance = db.investment_performance
 
 def save_trade_record(record):
+    """
+    거래 기록을 MongoDB의 trade_records 컬렉션에 저장합니다.
+    """
     try:
         trade_records.insert_one(record)
         logging.info("거래 기록이 MongoDB에 저장되었습니다.")
@@ -35,7 +38,10 @@ def save_trade_record(record):
     except Exception as e:
         logging.error(f"예기치 않은 에러 발생: {e}")
 
-def save_investment_performance_record(record):
+def save_investment_performance(record):
+    """
+    투자 성과 기록을 MongoDB의 investment_performance 컬렉션에 저장합니다.
+    """
     try:
         investment_performance.insert_one(record)
         logging.info("투자 성과 기록이 MongoDB에 저장되었습니다.")
