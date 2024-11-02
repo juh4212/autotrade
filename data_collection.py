@@ -55,10 +55,22 @@ def get_wallet_balance():
         try:
             # 잔고 정보 가져오기 (accountType='CONTRACT')
             response = bybit_client.get_wallet_balance(coin="USDT", accountType="CONTRACT")
-            if response["ret_code"] == 0:
-                return response["result"]["USDT"]["available_balance"]
+            logging.debug(f"get_wallet_balance response: {response}")  # 디버그용 로그 추가
+
+            if response.get("retCode") == 0:
+                balances = response["result"]["balances"]
+                usdt_balance = None
+                for balance in balances:
+                    if balance["coin"] == "USDT":
+                        usdt_balance = balance["available"]
+                        break
+                if usdt_balance is not None:
+                    return usdt_balance
+                else:
+                    logging.error("USDT 잔고 정보를 찾을 수 없습니다.")
+                    return None
             else:
-                logging.error(f"잔고 정보 가져오기 실패: {response['ret_msg']}")
+                logging.error(f"잔고 정보 가져오기 실패: {response.get('retMsg')}")
                 return None
         except Exception as e:
             logging.error(f"잔고 정보 가져오기 중 에러 발생: {e}")
