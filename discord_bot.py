@@ -34,7 +34,7 @@ except (TypeError, ValueError):
     BYBIT_API_KEY = None
     BYBIT_API_SECRET = None
 
-# Bybit 클라이언트 초기화 (endpoint 인자 제거)
+# Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     bybit_client = HTTP(
         api_key=BYBIT_API_KEY,
@@ -74,12 +74,24 @@ async def send_balance_message():
     try:
         # 잔고 정보 가져오기 (예: USDT 잔고, accountType='CONTRACT')
         response = bybit_client.get_wallet_balance(coin="USDT", accountType="CONTRACT")
-        if response["ret_code"] == 0:
-            usdt_balance = response["result"]["USDT"]["available_balance"]
-            balance_info = f"현재 잔고: {usdt_balance} USDT"
-            await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+        logging.debug(f"get_wallet_balance response: {response}")  # 디버그용 로그 추가
+
+        if response.get("retCode") == 0:
+            balances = response["result"]["balances"]
+            usdt_balance = None
+            for balance in balances:
+                if balance["coin"] == "USDT":
+                    usdt_balance = balance["available"]
+                    break
+            if usdt_balance is not None:
+                balance_info = f"현재 잔고: {usdt_balance} USDT"
+                await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+            else:
+                error_msg = "USDT 잔고 정보를 찾을 수 없습니다."
+                logging.error(error_msg)
+                await send_message(error_msg)
         else:
-            error_msg = f"잔고 정보 가져오기 실패: {response['ret_msg']}"
+            error_msg = f"잔고 정보 가져오기 실패: {response.get('retMsg')}"
             logging.error(error_msg)
             await send_message(error_msg)
     except Exception as e:
