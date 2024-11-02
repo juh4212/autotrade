@@ -32,4 +32,4 @@ RUN chown -R myuser:myuser logs
 USER myuser
 
 # 애플리케이션 실행
-CMD ["python", "scheduler.py"]  # scheduler.py 실행
+CMD ["python", "main.py"]  # main.py 실행
