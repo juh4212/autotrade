@@ -1,5 +1,5 @@
 requests
-bybit
+pybit
 python-dotenv
 beautifulsoup4
 pandas
