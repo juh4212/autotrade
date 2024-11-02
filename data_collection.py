@@ -1,71 +1,50 @@
 # data_collection.py
 
 import requests
-import pandas as pd
-from bybit import bybit
+import logging
+from pybit.unified_trading import HTTP
 import os
-import json
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 
-# 환경 변수 로드
-load_dotenv()
-
+# Bybit 클라이언트 초기화
 BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
 BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 
-# Bybit 클라이언트 설정
-client = bybit(test=False, api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
-
-def get_market_data(symbol="BTCUSD", interval="1", limit=200):
-    """
-    Bybit에서 시장 데이터(캔들스틱 데이터)를 수집합니다.
-    """
-    try:
-        response = client.Kline.Kline_get(symbol=symbol, interval=interval, limit=limit).result()
-        data = response[0]['result']
-        df = pd.DataFrame(data)
-        df['timestamp'] = pd.to_datetime(df['open_time'], unit='s')
-        df.set_index('timestamp', inplace=True)
-        return df
-    except Exception as e:
-        print(f"시장 데이터 수집 에러: {e}")
-        return pd.DataFrame()
-
-def get_order_history(symbol="BTCUSD", limit=100):
-    """
-    Bybit에서 거래 내역을 수집합니다.
-    """
-    try:
-        response = client.Order.Order_getOrders(symbol=symbol, limit=limit).result()
-        orders = response[0]['result']
-        return orders
-    except Exception as e:
-        print(f"거래 내역 수집 에러: {e}")
-        return []
+if BYBIT_API_KEY and BYBIT_API_SECRET:
+    bybit_client = HTTP(
+        api_key=BYBIT_API_KEY,
+        api_secret=BYBIT_API_SECRET
+    )
+    logging.info("Bybit 클라이언트가 초기화되었습니다.")
+else:
+    bybit_client = None
+    logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
 
 def get_fear_greed_index():
-    """
-    공포 탐욕 지수를 수집합니다. API가 없을 경우 웹 스크래핑을 사용.
-    """
     try:
-        url = "https://alternative.me/crypto/fear-and-greed-index/"
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        index_element = soup.find("div", {"class": "fng-circle"})
-        index = index_element.text.strip() if index_element else "N/A"
-        return index
+        response = requests.get('https://api.alternative.me/fng/?limit=1')
+        if response.status_code == 200:
+            data = response.json()
+            return data['data'][0]['value']
+        else:
+            logging.error(f"공포 탐욕 지수 가져오기 실패: HTTP {response.status_code}")
+            return None
     except Exception as e:
-        print(f"공포 탐욕 지수 수집 에러: {e}")
-        return "N/A"
+        logging.error(f"공포 탐욕 지수 가져오기 중 에러 발생: {e}")
+        return None
 
-# 테스트용 호출
-if __name__ == "__main__":
-    df = get_market_data()
-    print(df.head())
+# 나머지 데이터 수집 함수들
+def get_market_data():
+    # 시장 데이터 수집 로직 구현
+    pass
 
-    orders = get_order_history()
-    print(json.dumps(orders, indent=2))
-
-    fg_index = get_fear_greed_index()
-    print(f"공포 탐욕 지수: {fg_index}")
+def get_order_history(symbol, limit=100):
+    if bybit_client:
+        try:
+            response = bybit_client.get_order_history(symbol=symbol, limit=limit)
+            return response.get('result', [])
+        except Exception as e:
+            logging.error(f"주문 이력 가져오기 중 에러 발생: {e}")
+            return []
+    else:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return []
