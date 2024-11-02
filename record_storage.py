@@ -3,7 +3,6 @@
 from pymongo import MongoClient, errors
 import os
 import logging
-import time
 
 # 환경 변수에서 MongoDB URI 가져오기
 MONGO_URI = os.getenv('MONGO_URI', 'mongodb://mongo:27017/autotrade_db')
