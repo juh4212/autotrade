@@ -5,8 +5,8 @@ import asyncio
 
 # Discord Intents 설정
 intents = discord.Intents.default()
-intents.guilds = True  # 서버 관련 이벤트를 수신하기 위해 필요
-intents.messages = True  # 메시지 관련 이벤트를 수신하기 위해 필요
+intents.guilds = True        # 서버 관련 이벤트 수신
+intents.messages = True      # 메시지 관련 이벤트 수신
 
 # Discord 클라이언트 초기화
 client = discord.Client(intents=intents)
@@ -61,7 +61,7 @@ def notify_discord(message):
         logging.warning('Discord 봇이 준비되지 않았거나, DISCORD_CHANNEL_ID가 설정되지 않았습니다.')
 
 async def run_bot():
-    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리
+    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리하는 것을 권장
     if not token:
         logging.error('DISCORD_BOT_TOKEN 환경 변수가 설정되지 않았습니다.')
         return
