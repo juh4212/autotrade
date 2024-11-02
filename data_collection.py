@@ -49,3 +49,20 @@ def get_order_history(symbol, limit=100):
     else:
         logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
         return []
+
+def get_wallet_balance():
+    if bybit_client:
+        try:
+            # 잔고 정보 가져오기 (accountType='CONTRACT')
+            response = bybit_client.get_wallet_balance(coin="USDT", accountType="CONTRACT")
+            if response["ret_code"] == 0:
+                return response["result"]["USDT"]["available_balance"]
+            else:
+                logging.error(f"잔고 정보 가져오기 실패: {response['ret_msg']}")
+                return None
+        except Exception as e:
+            logging.error(f"잔고 정보 가져오기 중 에러 발생: {e}")
+            return None
+    else:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return None
