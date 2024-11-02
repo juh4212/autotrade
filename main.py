@@ -2,14 +2,14 @@
 
 import logging
 import threading
-from discord_bot import run_discord_bot
+from discord_bot import run_discord_bot_thread  # 수정된 임포트
 from scheduler import scheduler_job
 
 def start_scheduler():
     scheduler_job()
 
 def start_discord_bot():
-    run_discord_bot()
+    run_discord_bot_thread()  # 코루틴을 올바르게 실행
 
 if __name__ == "__main__":
     logging.basicConfig(
