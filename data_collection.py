@@ -62,17 +62,25 @@ def get_wallet_balance():
                 if result and "list" in result:
                     account_list = result["list"]
                     usdt_balance = None
+                    equity = None
+                    available_to_withdraw = None
+
                     for account in account_list:
                         if account.get("accountType") == "CONTRACT":
                             coins = account.get("coin", [])
                             for coin_info in coins:
                                 if coin_info.get("coin") == "USDT":
-                                    usdt_balance = coin_info.get("availableToWithdraw")
+                                    equity = coin_info.get("equity")
+                                    available_to_withdraw = coin_info.get("availableToWithdraw")
+                                    usdt_balance = {
+                                        "equity": equity,
+                                        "available_to_withdraw": available_to_withdraw
+                                    }
                                     break
-                        if usdt_balance is not None:
+                        if usdt_balance:
                             break
 
-                    if usdt_balance is not None:
+                    if usdt_balance:
                         return usdt_balance
                     else:
                         logging.error("USDT 잔고 정보를 찾을 수 없습니다.")
