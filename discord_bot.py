@@ -1,5 +1,3 @@
-# discord_bot.py
-
 import discord
 import logging
 import os
@@ -7,17 +5,18 @@ import asyncio
 
 # Discord Intents 설정
 intents = discord.Intents.default()
-intents.messages = True  # 필요에 따라 활성화
+intents.guilds = True  # 서버 관련 이벤트를 수신하기 위해 필요
+intents.messages = True  # 메시지 관련 이벤트를 수신하기 위해 필요
 
 # Discord 클라이언트 초기화
 client = discord.Client(intents=intents)
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,  # 로그 수준 설정
+    level=logging.INFO,
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
-        logging.StreamHandler()  # 콘솔에 로그 출력
+        logging.StreamHandler()
     ]
 )
 
@@ -37,7 +36,6 @@ async def on_ready():
 @client.event
 async def on_disconnect():
     logging.warning('연결이 끊겼습니다!')
-    # 비동기 함수 호출을 위해 Task 생성
     if DISCORD_CHANNEL_ID:
         asyncio.create_task(send_message('연결이 끊겼습니다!'))
 
@@ -58,13 +56,12 @@ async def send_message(message):
 
 def notify_discord(message):
     if DISCORD_CHANNEL_ID and client.is_ready():
-        # 비동기 이벤트 루프에서 안전하게 메시지를 전송
         asyncio.run_coroutine_threadsafe(send_message(message), client.loop)
     else:
         logging.warning('Discord 봇이 준비되지 않았거나, DISCORD_CHANNEL_ID가 설정되지 않았습니다.')
 
 async def run_bot():
-    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리하는 것을 권장
+    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리
     if not token:
         logging.error('DISCORD_BOT_TOKEN 환경 변수가 설정되지 않았습니다.')
         return
