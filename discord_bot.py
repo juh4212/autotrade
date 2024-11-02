@@ -54,7 +54,7 @@ async def on_ready():
 async def on_disconnect():
     logging.warning('연결이 끊겼습니다!')
     if DISCORD_CHANNEL_ID:
-        asyncio.create_task(send_message('연결이 끊겼습니다!'))
+        await send_message('연결이 끊겼습니다!')
 
 @client.event
 async def on_error(event, *args, **kwargs):
@@ -91,6 +91,5 @@ async def run_discord_bot():
         logging.error(f'Discord 봇 실행 중 에러 발생: {e}')
 
 def run_discord_bot_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_discord_bot())
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_discord_bot())
