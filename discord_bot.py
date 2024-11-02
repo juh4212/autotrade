@@ -16,7 +16,7 @@ client = discord.Client(intents=intents)
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # INFO에서 DEBUG로 변경
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
         logging.StreamHandler()
@@ -77,23 +77,33 @@ async def send_balance_message():
         logging.debug(f"get_wallet_balance response: {response}")  # 디버그용 로그 추가
 
         if response.get("retCode") == 0:
-            balances = response["result"]["balances"]
-            usdt_balance = None
-            for balance in balances:
-                if balance["coin"] == "USDT":
-                    usdt_balance = balance["available"]
-                    break
-            if usdt_balance is not None:
-                balance_info = f"현재 잔고: {usdt_balance} USDT"
-                await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+            result = response.get("result")
+            if result and "balances" in result:
+                balances = result["balances"]
+                usdt_balance = None
+                for balance in balances:
+                    if balance["coin"] == "USDT":
+                        usdt_balance = balance["available"]
+                        break
+                if usdt_balance is not None:
+                    balance_info = f"현재 잔고: {usdt_balance} USDT"
+                    await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+                else:
+                    error_msg = "USDT 잔고 정보를 찾을 수 없습니다."
+                    logging.error(error_msg)
+                    await send_message(error_msg)
             else:
-                error_msg = "USDT 잔고 정보를 찾을 수 없습니다."
+                error_msg = "balances 키가 응답에 포함되지 않았습니다."
                 logging.error(error_msg)
                 await send_message(error_msg)
         else:
             error_msg = f"잔고 정보 가져오기 실패: {response.get('retMsg')}"
             logging.error(error_msg)
             await send_message(error_msg)
+    except KeyError as ke:
+        error_msg = f"잔고 정보 파싱 중 KeyError 발생: {ke}"
+        logging.error(error_msg)
+        await send_message(error_msg)
     except Exception as e:
         error_msg = f"잔고 정보 가져오기 중 에러 발생: {e}"
         logging.error(error_msg)
