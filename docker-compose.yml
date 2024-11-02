@@ -9,11 +9,11 @@ services:
       - .env  # 환경 변수 파일 로드
     environment:
       - MONGO_URI=mongodb://mongo:27017/autotrade_db
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
     depends_on:
       - mongo
     restart: unless-stopped
-    # 명시적으로 scheduler.py 실행 (선택 사항)
-    # command: ["python", "scheduler.py"]
 
   mongo:
     image: mongo:5.0
