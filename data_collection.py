@@ -70,8 +70,8 @@ def get_wallet_balance():
                             coins = account.get("coin", [])
                             for coin_info in coins:
                                 if coin_info.get("coin") == "USDT":
-                                    equity = coin_info.get("equity")
-                                    available_to_withdraw = coin_info.get("availableToWithdraw")
+                                    equity = float(coin_info.get("equity", 0))
+                                    available_to_withdraw = float(coin_info.get("availableToWithdraw", 0))
                                     usdt_balance = {
                                         "equity": equity,
                                         "available_to_withdraw": available_to_withdraw
