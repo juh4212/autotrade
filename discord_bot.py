@@ -4,6 +4,7 @@ import discord
 import logging
 import os
 import asyncio
+from pybit import HTTP  # pybit 라이브러리 임포트
 
 # Discord Intents 설정
 intents = discord.Intents.default()
@@ -22,17 +23,33 @@ logging.basicConfig(
     ]
 )
 
-# 환경 변수에서 Discord 채널 ID 가져오기
+# 환경 변수에서 Discord 채널 ID 및 Bybit API 키 가져오기
 try:
     DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))
+    BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
+    BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 except (TypeError, ValueError):
-    logging.error('DISCORD_CHANNEL_ID가 올바른 숫자가 아닙니다.')
+    logging.error('DISCORD_CHANNEL_ID가 올바른 숫자가 아니거나, BYBIT_API_KEY/SECRET이 설정되지 않았습니다.')
     DISCORD_CHANNEL_ID = None
+    BYBIT_API_KEY = None
+    BYBIT_API_SECRET = None
+
+# Bybit 클라이언트 초기화
+if BYBIT_API_KEY and BYBIT_API_SECRET:
+    bybit_client = HTTP(
+        endpoint="https://api.bybit.com",
+        api_key=BYBIT_API_KEY,
+        api_secret=BYBIT_API_SECRET
+    )
+    logging.info("Bybit 클라이언트가 초기화되었습니다.")
+else:
+    bybit_client = None
+    logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
 
 @client.event
 async def on_ready():
     logging.info(f'연결되었습니다! (사용자: {client.user})')
-    if DISCORD_CHANNEL_ID:
+    if DISCORD_CHANNEL_ID and bybit_client:
         await send_balance_message()
     await list_channels()  # 모든 채널 목록 출력
 
@@ -48,11 +65,28 @@ async def on_error(event, *args, **kwargs):
 
 async def send_balance_message():
     """
-    프로그램 시작 시 잔고 정보를 Discord 채널에 전송합니다.
-    실제 잔고 정보를 가져오는 로직으로 대체하세요.
+    프로그램 시작 시 실시간 잔고 정보를 Discord 채널에 전송합니다.
+    Bybit API를 통해 잔고 정보를 가져옵니다.
     """
-    balance_info = "현재 잔고: 10 BTC, 5000 USDT"  # 예시 메시지
-    await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+    if not bybit_client:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return
+    
+    try:
+        # 잔고 정보 가져오기 (예: USDT 잔고)
+        response = bybit_client.get_wallet_balance(coin="USDT")
+        if response["ret_code"] == 0:
+            usdt_balance = response["result"]["USDT"]["available_balance"]
+            balance_info = f"현재 잔고: {usdt_balance} USDT"
+            await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+        else:
+            error_msg = f"잔고 정보 가져오기 실패: {response['ret_msg']}"
+            logging.error(error_msg)
+            await send_message(error_msg)
+    except Exception as e:
+        error_msg = f"잔고 정보 가져오기 중 에러 발생: {e}"
+        logging.error(error_msg)
+        await send_message(error_msg)
 
 async def send_message(message):
     if DISCORD_CHANNEL_ID:
