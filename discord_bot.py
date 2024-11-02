@@ -16,7 +16,7 @@ client = discord.Client(intents=intents)
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.DEBUG,  # 디버깅을 위해 레벨을 DEBUG로 설정
+    level=logging.INFO,  # 필요 시 DEBUG로 변경
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
         logging.StreamHandler()
@@ -81,19 +81,24 @@ async def send_balance_message():
             if result and "list" in result:
                 account_list = result["list"]
                 usdt_balance = None
+                equity = None
+                available_to_withdraw = None
+
                 for account in account_list:
                     if account.get("accountType") == "CONTRACT":
                         coins = account.get("coin", [])
                         for coin_info in coins:
                             if coin_info.get("coin") == "USDT":
-                                usdt_balance = coin_info.get("availableToWithdraw")
+                                equity = coin_info.get("equity")
+                                available_to_withdraw = coin_info.get("availableToWithdraw")
+                                usdt_balance = f"Equity: {equity} USDT\nAvailable to Withdraw: {available_to_withdraw} USDT"
                                 break
-                    if usdt_balance is not None:
+                    if usdt_balance:
                         break
 
-                if usdt_balance is not None:
-                    balance_info = f"현재 잔고: {usdt_balance} USDT (AVAILABLE TO WITHDRAW)"
-                    await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
+                if usdt_balance:
+                    balance_info = f"현재 잔고 정보:\n{usdt_balance}"
+                    await send_message(f"프로그램이 시작되었습니다.\n{balance_info}")
                 else:
                     error_msg = "USDT 잔고 정보를 찾을 수 없습니다."
                     logging.error(error_msg)
