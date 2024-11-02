@@ -1,3 +1,5 @@
+# discord_bot.py
+
 import discord
 import logging
 import os
@@ -31,7 +33,7 @@ except (TypeError, ValueError):
 async def on_ready():
     logging.info(f'연결되었습니다! (사용자: {client.user})')
     if DISCORD_CHANNEL_ID:
-        await send_message('연결되었습니다!')
+        await send_balance_message()
     await list_channels()  # 모든 채널 목록 출력
 
 @client.event
@@ -43,6 +45,14 @@ async def on_disconnect():
 @client.event
 async def on_error(event, *args, **kwargs):
     logging.error(f'이벤트 "{event}" 처리 중 에러 발생', exc_info=True)
+
+async def send_balance_message():
+    """
+    프로그램 시작 시 잔고 정보를 Discord 채널에 전송합니다.
+    실제 잔고 정보를 가져오는 로직으로 대체하세요.
+    """
+    balance_info = "현재 잔고: 10 BTC, 5000 USDT"  # 예시 메시지
+    await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
 
 async def send_message(message):
     if DISCORD_CHANNEL_ID:
