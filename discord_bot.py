@@ -4,7 +4,7 @@ import discord
 import logging
 import os
 import asyncio
-from pybit import HTTP  # pybit 라이브러리 임포트
+from pybit import usdt_perpetual  # pybit v5에서 usdt_perpetual 모듈 임포트
 
 # Discord Intents 설정
 intents = discord.Intents.default()
@@ -36,7 +36,7 @@ except (TypeError, ValueError):
 
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
-    bybit_client = HTTP(
+    bybit_client = usdt_perpetual.HTTP(
         endpoint="https://api.bybit.com",
         api_key=BYBIT_API_KEY,
         api_secret=BYBIT_API_SECRET
@@ -114,7 +114,7 @@ async def list_channels():
         for channel in guild.text_channels:
             logging.info(f' - 채널: {channel.name} (ID: {channel.id})')
 
-async def run_bot():
+async def run_discord_bot():
     token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리
     if not token:
         logging.error('DISCORD_BOT_TOKEN 환경 변수가 설정되지 않았습니다.')
@@ -129,8 +129,5 @@ async def run_bot():
             logging.error(f'Discord 봇 실행 중 에러 발생: {e}')
             await asyncio.sleep(5)  # 재연결 전에 잠시 대기
 
-def run_discord_bot():
-    asyncio.run(run_bot())
-
-if __name__ == "__main__":
-    run_discord_bot()
+def run_discord_bot_thread():
+    asyncio.run(run_discord_bot())
