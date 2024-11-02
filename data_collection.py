@@ -59,29 +59,37 @@ def get_wallet_balance():
 
             if response.get("retCode") == 0:
                 result = response.get("result")
-                if result and "balances" in result:
-                    balances = result["balances"]
+                if result and "list" in result:
+                    account_list = result["list"]
                     usdt_balance = None
-                    for balance in balances:
-                        if balance["coin"] == "USDT":
-                            usdt_balance = balance["available"]
+                    for account in account_list:
+                        if account.get("accountType") == "CONTRACT":
+                            coins = account.get("coin", [])
+                            for coin_info in coins:
+                                if coin_info.get("coin") == "USDT":
+                                    usdt_balance = coin_info.get("availableToWithdraw")
+                                    break
+                        if usdt_balance is not None:
                             break
+
                     if usdt_balance is not None:
                         return usdt_balance
                     else:
                         logging.error("USDT 잔고 정보를 찾을 수 없습니다.")
                         return None
                 else:
-                    error_msg = "balances 키가 응답에 포함되지 않았습니다."
-                    logging.error(error_msg)
+                    logging.error("list 키가 응답에 포함되지 않았습니다.")
+                    logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
                     return None
             else:
                 error_msg = f"잔고 정보 가져오기 실패: {response.get('retMsg')}"
                 logging.error(error_msg)
+                logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
                 return None
         except KeyError as ke:
             error_msg = f"잔고 정보 파싱 중 KeyError 발생: {ke}"
             logging.error(error_msg)
+            logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
             return None
         except Exception as e:
             error_msg = f"잔고 정보 가져오기 중 에러 발생: {e}"
