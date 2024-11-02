@@ -3,6 +3,7 @@
 import os
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 import time
 from data_collection import get_market_data, get_order_history, get_fear_greed_index
 from data_processing import add_technical_indicators, analyze_recent_trades
@@ -11,6 +12,7 @@ from trade_execution import place_order
 from record_storage import save_trade_record, save_investment_performance
 from reflection_improvement import get_reflection_and_improvement, apply_improvements
 from discord_bot import notify_discord
+from datetime import datetime
 
 # 로깅 설정 (콘솔 핸들러만 사용)
 logging.basicConfig(
@@ -97,8 +99,11 @@ def job():
 
 def scheduler_job():
     scheduler = BackgroundScheduler()
-    # 작업을 10분마다 실행하도록 설정
-    scheduler.add_job(job, 'interval', minutes=10)
+
+    # 작업을 10분마다 실행하도록 설정, 첫 실행은 현재 시각으로 설정
+    trigger = IntervalTrigger(minutes=10, start_date=datetime.now())
+    scheduler.add_job(job, trigger, id='autotrade_job', replace_existing=True)
+
     scheduler.start()
     logging.info("스케줄러 시작")
 
