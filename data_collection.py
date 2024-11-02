@@ -4,6 +4,7 @@ import requests
 import logging
 from pybit.unified_trading import HTTP
 import os
+import pandas as pd
 
 # Bybit 클라이언트 초기화
 BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
@@ -32,11 +33,9 @@ def get_fear_greed_index():
         logging.error(f"공포 탐욕 지수 가져오기 중 에러 발생: {e}")
         return None
 
-# 나머지 데이터 수집 함수들
 def get_market_data():
     # 시장 데이터 수집 로직 구현
     # 예시로 빈 DataFrame 반환
-    import pandas as pd
     return pd.DataFrame()
 
 def get_order_history(symbol, limit=100):
