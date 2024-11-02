@@ -16,7 +16,7 @@ client = discord.Client(intents=intents)
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.DEBUG,  # INFO에서 DEBUG로 변경
+    level=logging.DEBUG,  # 디버깅을 위해 레벨을 DEBUG로 설정
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
         logging.StreamHandler()
@@ -78,22 +78,28 @@ async def send_balance_message():
 
         if response.get("retCode") == 0:
             result = response.get("result")
-            if result and "balances" in result:
-                balances = result["balances"]
+            if result and "list" in result:
+                account_list = result["list"]
                 usdt_balance = None
-                for balance in balances:
-                    if balance["coin"] == "USDT":
-                        usdt_balance = balance["available"]
+                for account in account_list:
+                    if account.get("accountType") == "CONTRACT":
+                        coins = account.get("coin", [])
+                        for coin_info in coins:
+                            if coin_info.get("coin") == "USDT":
+                                usdt_balance = coin_info.get("availableToWithdraw")
+                                break
+                    if usdt_balance is not None:
                         break
+
                 if usdt_balance is not None:
-                    balance_info = f"현재 잔고: {usdt_balance} USDT"
+                    balance_info = f"현재 잔고: {usdt_balance} USDT (AVAILABLE TO WITHDRAW)"
                     await send_message(f"프로그램이 시작되었습니다. 잔고 정보:\n{balance_info}")
                 else:
                     error_msg = "USDT 잔고 정보를 찾을 수 없습니다."
                     logging.error(error_msg)
                     await send_message(error_msg)
             else:
-                error_msg = "balances 키가 응답에 포함되지 않았습니다."
+                error_msg = "list 키가 응답에 포함되지 않았습니다."
                 logging.error(error_msg)
                 logging.debug(f"Full response: {response}")  # 응답 전체 로그 추가
                 await send_message(error_msg)
