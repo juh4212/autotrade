@@ -102,4 +102,31 @@ async def send_message(message):
         logging.error('DISCORD_CHANNEL_ID가 설정되지 않았습니다.')
 
 def notify_discord(message):
-    if DISCORD_CHANNEL_ID and client.is_ready(
+    if DISCORD_CHANNEL_ID and client.is_ready():
+        asyncio.run_coroutine_threadsafe(send_message(message), client.loop)
+    else:
+        logging.warning('Discord 봇이 준비되지 않았거나, DISCORD_CHANNEL_ID가 설정되지 않았습니다.')
+
+async def list_channels():
+    for guild in client.guilds:
+        logging.info(f'서버: {guild.name} (ID: {guild.id})')
+        for channel in guild.text_channels:
+            logging.info(f' - 채널: {channel.name} (ID: {channel.id})')
+
+async def run_discord_bot():
+    token = os.getenv('DISCORD_BOT_TOKEN')  # .env 파일이나 환경 변수로 관리
+    if not token:
+        logging.error('DISCORD_BOT_TOKEN 환경 변수가 설정되지 않았습니다.')
+        return
+    while True:
+        try:
+            await client.start(token)
+        except discord.ConnectionClosed as e:
+            logging.warning(f'Discord 봇 연결이 끊겼습니다: {e}')
+            await asyncio.sleep(5)  # 재연결 전에 잠시 대기
+        except Exception as e:
+            logging.error(f'Discord 봇 실행 중 에러 발생: {e}')
+            await asyncio.sleep(5)  # 재연결 전에 잠시 대기
+
+def run_discord_bot_thread():
+    asyncio.run(run_discord_bot())
