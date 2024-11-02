@@ -1,119 +1,62 @@
 # scheduler.py
 
-import os
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 import logging
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-import time
-from data_collection import get_market_data, get_order_history, get_fear_greed_index
-from data_processing import add_technical_indicators, analyze_recent_trades
-from ai_judgment import get_ai_decision
-from trade_execution import place_order
-from record_storage import save_trade_record, save_investment_performance
-from reflection_improvement import get_reflection_and_improvement, apply_improvements
-from discord_bot import notify_discord
-from datetime import datetime
+from data_collection import get_wallet_balance
+from trade_execution import determine_trade_percentage, calculate_position_size, place_order
 
-# 로깅 설정 (콘솔 핸들러만 사용)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s:%(levelname)s:%(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+scheduler = AsyncIOScheduler()
 
-def job():
-    try:
-        logging.info("작업 시작")
-
-        # 데이터 수집
-        df = get_market_data()
-        if df.empty:
-            logging.warning("시장 데이터가 비어 있습니다.")
-            notify_discord("시장 데이터가 비어 있습니다.")
-            return
-        df = add_technical_indicators(df)
-        symbol = "BTCUSD"
-        orders = get_order_history(symbol=symbol, limit=100)
-        analysis = analyze_recent_trades(orders)
-        fg_index = get_fear_greed_index()
-
-        # AI 판단
-        decision, reason = get_ai_decision(df, analysis, fg_index)
-        logging.info(f"결정: {decision} - 이유: {reason}")
-
-        # Discord 알림
-        if decision in ["buy", "sell"]:
-            message = f"매매 신호: {decision.upper()} - 이유: {reason}"
-            notify_discord(message)
+async def execute_trade():
+    """
+    거래를 실행하는 스케줄된 작업.
+    """
+    logging.info("거래 작업 시작")
+    
+    # 잔고 정보 가져오기
+    balance_info = get_wallet_balance()
+    
+    if balance_info:
+        equity = balance_info.get("equity", 0)
+        available_to_withdraw = balance_info.get("available_to_withdraw", 0)
+        
+        logging.info(f"Total Equity: {equity} USDT")
+        logging.info(f"Available to Withdraw: {available_to_withdraw} USDT")
+        
+        # AI를 사용하여 퍼센티지 결정
+        trade_percentage = determine_trade_percentage()
+        
+        # 포지션 크기 계산
+        position_size = calculate_position_size(equity, trade_percentage, leverage=5)
+        
+        # 실제로 주문할 수 있는지 확인
+        if position_size <= available_to_withdraw:
+            # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
+            symbol = "BTCUSDT"  # 원하는 심볼로 변경
+            side = "Buy"  # 또는 "Sell"
+            
+            # 주문 실행
+            response = place_order(symbol, side, position_size, leverage=5, order_type="Market")
+            
+            if response and response.get("retCode") == 0:
+                logging.info(f"주문 성공: {response}")
+            else:
+                logging.error("주문 실패")
         else:
-            message = "현재 포지션을 유지합니다. 관망 중."
-            notify_discord(message)
-
-        # 거래 실행
-        if decision == "buy":
-            qty = 1  # 구매할 수량 설정 (예: 1 BTC)
-            order = place_order(symbol, "Buy", qty=qty, order_type="Market")
-        elif decision == "sell":
-            qty = 1  # 판매할 수량 설정 (예: 1 BTC)
-            order = place_order(symbol, "Sell", qty=qty, order_type="Market")
-        else:
-            order = None
-
-        # 기록 저장 (MongoDB)
-        if order and 'result' in order:
-            record = {
-                "symbol": symbol,
-                "side": "Buy" if decision == "buy" else "Sell",
-                "qty": qty if decision in ["buy", "sell"] else None,
-                "price": order['result']['price'] if 'price' in order['result'] else None,
-                "order_type": order['result']['order_type'] if 'order_type' in order['result'] else "Market",
-                "status": order['result']['order_status'] if 'order_status' in order['result'] else "Unknown",
-                "response": order,
-                "timestamp": time.time()
-            }
-            save_trade_record(record)
-
-        # 투자 성과 저장 (MongoDB)
-        performance_record = {
-            "total_trades": analysis['total_trades'],
-            "profitable_trades": analysis['profitable_trades'],
-            "win_rate": analysis['win_rate'],
-            "timestamp": time.time()
-        }
-        save_investment_performance(performance_record)
-
-        # 반성 및 개선
-        reflection = get_reflection_and_improvement(analysis)
-        logging.info(f"반성 및 개선점: {reflection}")
-        notify_discord(f"반성 및 개선점:\n{reflection}")
-        apply_improvements(reflection)
-
-        logging.info("작업 완료")
-
-    except Exception as e:
-        error_message = f"작업 중 에러 발생: {e}"
-        logging.error(error_message)
-        notify_discord(error_message)
+            logging.error("포지션 크기가 출금 가능 금액보다 큽니다.")
+    else:
+        logging.error("잔고 정보를 가져오지 못했습니다.")
 
 def scheduler_job():
-    scheduler = BackgroundScheduler()
-
-    # 작업을 10분마다 실행하도록 설정, 첫 실행은 현재 시각으로 설정
-    trigger = IntervalTrigger(minutes=10, start_date=datetime.now())
-    scheduler.add_job(job, trigger, id='autotrade_job', replace_existing=True)
-
+    """
+    스케줄러를 설정하고 시작합니다.
+    """
+    # 예: 매일 오전 9시에 거래 실행
+    scheduler.add_job(execute_trade, 'cron', hour=9, minute=0)
+    
+    # 예: 매 1시간마다 거래 실행
+    # scheduler.add_job(execute_trade, 'interval', hours=1)
+    
     scheduler.start()
-    logging.info("스케줄러 시작")
-
-    try:
-        while True:
-            time.sleep(2)
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
-        logging.info("스케줄러 종료")
-
-# 테스트용 호출
-if __name__ == "__main__":
-    scheduler_job()
+    logging.info("스케줄러가 시작되었습니다.")
