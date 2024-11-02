@@ -4,7 +4,7 @@ import discord
 import logging
 import os
 import asyncio
-from pybit.usdt_perpetual import HTTP  # pybit v5에서 HTTP 클래스 임포트
+from pybit.unified_trading import HTTP  # Updated import for pybit v5
 
 # Discord Intents 설정
 intents = discord.Intents.default()
@@ -37,9 +37,9 @@ except (TypeError, ValueError):
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     bybit_client = HTTP(
-        endpoint="https://api.bybit.com",
         api_key=BYBIT_API_KEY,
-        api_secret=BYBIT_API_SECRET
+        api_secret=BYBIT_API_SECRET,
+        endpoint="https://api.bybit.com"
     )
     logging.info("Bybit 클라이언트가 초기화되었습니다.")
 else:
