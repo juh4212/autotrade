@@ -22,7 +22,7 @@ services:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=securepassword
     ports:
-      - "27017:27017"
+      - "27017:27017"  # 호스트와 컨테이너 간 포트 매핑
     restart: unless-stopped
 
 volumes:
