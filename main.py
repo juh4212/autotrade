@@ -1,37 +1,29 @@
 # main.py
 
-import threading
-from discord_bot import run_discord_bot, notify_discord
-from scheduler import scheduler_job
-import time
 import logging
+import threading
+from discord_bot import run_discord_bot
+from scheduler import scheduler_job
 
-# 로깅 설정 (콘솔 핸들러만 사용)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s:%(levelname)s:%(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+def start_scheduler():
+    scheduler_job()
 
-def main():
-    # Discord 봇 실행
-    discord_thread = threading.Thread(target=run_discord_bot, daemon=True)
-    discord_thread.start()
-    logging.info("Discord 봇 스레드 시작")
-
-    # 스케줄러 실행
-    scheduler_thread = threading.Thread(target=scheduler_job, daemon=True)
-    scheduler_thread.start()
-    logging.info("스케줄러 스레드 시작")
-
-    # 메인 스레드는 무한 루프로 유지
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logging.info("프로그램 종료 요청")
+def start_discord_bot():
+    run_discord_bot()
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s:%(levelname)s:%(message)s',
+        handlers=[
+            logging.StreamHandler()
+        ]
+    )
+    
+    # 스케줄러를 별도의 스레드에서 실행
+    scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
+    scheduler_thread.start()
+    logging.info("스케줄러가 별도의 스레드에서 시작되었습니다.")
+    
+    # Discord 봇 실행
+    start_discord_bot()
