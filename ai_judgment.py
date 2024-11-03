@@ -4,7 +4,7 @@ import os
 import re
 import json
 import logging
-from openai import OpenAI  # OpenAI 라이브러리 임포트
+import openai  # OpenAI 라이브러리 임포트
 import pandas as pd
 
 # 로깅 설정
@@ -20,8 +20,6 @@ def calculate_performance(trades_df):
     """
     최근 거래 내역을 기반으로 퍼포먼스를 계산하는 함수
     """
-    # 퍼포먼스 계산 로직 구현
-    # 예시: 수익률 계산
     if trades_df.empty:
         return 0.0
     initial_balance = trades_df.iloc[0]['balance']
@@ -40,14 +38,14 @@ def generate_reflection(trades_df, current_market_data):
         logging.error("OpenAI API key is missing or invalid.")
         return None
 
-    client = OpenAI(api_key=openai_api_key)
+    openai.api_key = openai_api_key
 
     # OpenAI API 호출로 AI의 반성 일기 및 개선 사항 생성 요청
-    response = client.chat.completions.create(
-        model="gpt-4",  # 모델 이름을 실제 사용 중인 것으로 변경
+    response = openai.ChatCompletion.create(
+        model="gpt-4",  # 실제 사용 중인 모델로 변경
         messages=[
             {
-                "role": "user",
+                "role": "system",
                 "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
             },
             {
@@ -89,11 +87,9 @@ def get_ai_decision(trades_df, current_market_data):
         logging.error("Failed to generate reflection from AI.")
         return None
 
-    # AI 반성을 Discord에 게시하거나 로그로 남길 수 있음
     logging.info(f"AI Reflection: {reflection}")
 
     # AI로부터 매매 결정을 생성
-    # 여기서는 예시로 JSON 형식의 매매 결정을 반환한다고 가정
     decision = analyze_reflection(reflection)
     return decision
 
