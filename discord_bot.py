@@ -37,12 +37,16 @@ except (TypeError, ValueError):
 
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
-    bybit_client = HTTP(
-        "https://api.bybit.com",  # endpoint를 위치 인자로 전달
-        api_key=BYBIT_API_KEY,
-        api_secret=BYBIT_API_SECRET
-    )
-    logging.info("Bybit 클라이언트가 초기화되었습니다.")
+    try:
+        bybit_client = HTTP(
+            endpoint="https://api.bybit.com",  # endpoint를 키워드 인자로 전달
+            api_key=BYBIT_API_KEY,
+            api_secret=BYBIT_API_SECRET
+        )
+        logging.info("Bybit 클라이언트가 초기화되었습니다.")
+    except Exception as e:
+        bybit_client = None
+        logging.error(f"Bybit 클라이언트 초기화 실패: {e}")
 else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
