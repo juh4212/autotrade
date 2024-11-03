@@ -38,6 +38,7 @@ except (TypeError, ValueError):
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     bybit_client = HTTP(
+        "https://api.bybit.com",  # endpoint를 위치 인자로 전달
         api_key=BYBIT_API_KEY,
         api_secret=BYBIT_API_SECRET
     )
