@@ -1,9 +1,8 @@
 # data_collection.py
 
 import logging
-import requests
-from pybit.unified_trading import HTTP
 import os
+from pybit.unified_trading import HTTP
 
 # 로깅 설정
 logging.basicConfig(
@@ -43,7 +42,10 @@ def get_wallet_balance():
         return None
 
     try:
-        response = bybit_client.get_wallet_balance(coin='USDT')
+        response = bybit_client.get_wallet_balance(
+            accountType='CONTRACT',  # 계정 유형 설정
+            coin='USDT'
+        )
         if response['retCode'] == 0:
             balance_info = response['result']['list'][0]
             equity = float(balance_info['equity'])
@@ -64,10 +66,10 @@ def get_wallet_balance():
 def get_market_data(symbol):
     """
     Bybit에서 지정된 심볼의 시장 데이터를 가져옵니다.
-    
+
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
-    
+
     Returns:
         dict: 시장 데이터
     """
@@ -78,11 +80,11 @@ def get_market_data(symbol):
     try:
         response = bybit_client.get_orderbook(
             category='linear',
-            symbol=symbol,
-            limit=50
+            symbol=symbol
         )
         if response['retCode'] == 0:
             orderbook = response['result']
+            logging.info(f"{symbol}의 시장 데이터를 가져왔습니다.")
             return orderbook
         else:
             logging.error(f"시장 데이터를 가져오는 중 에러 발생: {response['retMsg']}")
@@ -91,4 +93,68 @@ def get_market_data(symbol):
         logging.error(f"시장 데이터를 가져오는 중 예외 발생: {e}")
         return None
 
-# 필요에 따라 추가적인 데이터 수집 함수들을 구현합니다.
+def get_recent_trades(symbol, limit=50):
+    """
+    Bybit에서 지정된 심볼의 최근 거래 내역을 가져옵니다.
+
+    Parameters:
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+        limit (int): 가져올 거래 수 (기본값: 50)
+
+    Returns:
+        list: 최근 거래 내역
+    """
+    if not bybit_client:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return None
+
+    try:
+        response = bybit_client.get_public_trading_records(
+            category='linear',
+            symbol=symbol,
+            limit=limit
+        )
+        if response['retCode'] == 0:
+            trades = response['result']['list']
+            logging.info(f"{symbol}의 최근 거래 내역을 가져왔습니다.")
+            return trades
+        else:
+            logging.error(f"최근 거래 내역을 가져오는 중 에러 발생: {response['retMsg']}")
+            return None
+    except Exception as e:
+        logging.error(f"최근 거래 내역을 가져오는 중 예외 발생: {e}")
+        return None
+
+def get_kline_data(symbol, interval='15', limit=200):
+    """
+    Bybit에서 지정된 심볼의 캔들 차트 데이터를 가져옵니다.
+
+    Parameters:
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+        interval (str): 캔들 차트 간격 (예: '1', '3', '5', '15', '30', '60', '120', '240', '360', '720', 'D', 'W', 'M')
+        limit (int): 가져올 데이터 수 (기본값: 200)
+
+    Returns:
+        list: 캔들 차트 데이터
+    """
+    if not bybit_client:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return None
+
+    try:
+        response = bybit_client.get_kline(
+            category='linear',
+            symbol=symbol,
+            interval=interval,
+            limit=limit
+        )
+        if response['retCode'] == 0:
+            kline_data = response['result']['list']
+            logging.info(f"{symbol}의 캔들 차트 데이터를 가져왔습니다.")
+            return kline_data
+        else:
+            logging.error(f"캔들 차트 데이터를 가져오는 중 에러 발생: {response['retMsg']}")
+            return None
+    except Exception as e:
+        logging.error(f"캔들 차트 데이터를 가져오는 중 예외 발생: {e}")
+        return None
