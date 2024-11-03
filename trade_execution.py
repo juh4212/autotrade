@@ -43,7 +43,7 @@ def decide_long_or_short():
     logging.info(f"거래 방향 결정: {side}")
     return side
 
-def calculate_position_size(equity, percentage, leverage=5):
+def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
     """
     포지션 크기를 계산합니다.
     
@@ -51,13 +51,18 @@ def calculate_position_size(equity, percentage, leverage=5):
         equity (float): 총 자본 (equity)
         percentage (int): 진입 퍼센티지 (10~30%)
         leverage (int): 레버리지 (기본값: 5)
+        is_leverage (bool): 레버리지 사용 여부
     
     Returns:
         float: 주문할 수량 (레버리지 포함)
     """
     position_usdt = (equity * percentage) / 100
-    order_quantity = position_usdt * leverage
-    logging.info(f"계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
+    if is_leverage:
+        order_quantity = position_usdt * leverage
+        logging.info(f"레버리지를 사용하여 계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
+    else:
+        order_quantity = position_usdt
+        logging.info(f"레버리지를 사용하지 않고 계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%)")
     return order_quantity
 
 async def place_order(symbol, side, qty, order_type="Market", category="spot", market_unit="value"):
@@ -86,11 +91,11 @@ async def place_order(symbol, side, qty, order_type="Market", category="spot", m
             "symbol": symbol,
             "side": side,
             "orderType": order_type,
-            "qty": str(qty),               # Bybit API는 문자열로 qty를 요구할 수 있음
-            "price": "0",                   # Market 주문이므로 price는 0으로 설정
+            "qty": f"{qty:.2f}",               # Bybit API는 문자열로 qty를 요구하며, 소수점 2자리로 제한
+            "price": "0",                      # Market 주문이므로 price는 0으로 설정
             "timeInForce": "GoodTillCancel",
             "orderLinkId": f"auto-trade-{int(random.random() * 100000)}",
-            "isLeverage": 0                # Spot 트레이딩
+            "isLeverage": 0                    # Spot 트레이딩
         }
 
         if category == "spot":
