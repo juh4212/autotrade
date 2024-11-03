@@ -3,6 +3,7 @@
 import logging
 import os
 from pybit.unified_trading import HTTP
+import asyncio
 
 # 환경 변수에서 Bybit API 키 및 시크릿 가져오기
 BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
