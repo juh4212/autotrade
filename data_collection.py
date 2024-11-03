@@ -43,26 +43,21 @@ def get_wallet_balance():
 
     try:
         response = bybit_client.get_wallet_balance(
-            accountType='CONTRACT',  # 'UNIFIED' 또는 'CONTRACT'로 설정
+            accountType='UNIFIED',  # 'UNIFIED' 또는 'CONTRACT'로 설정
             coin='USDT'             # 'USDT' 잔고 조회
         )
         logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
-            balance_list = response['result']['list']
-            usdt_balance = next((item for item in balance_list if item['coin'] == 'USDT'), None)
-            if usdt_balance:
-                equity = float(usdt_balance.get('equity', 0))
-                available_balance = float(usdt_balance.get('availableBalance', 0))
-                logging.info(f"총 자산 (Equity): {equity} USDT")
-                logging.info(f"사용 가능 잔액: {available_balance} USDT")
-                return {
-                    "equity": equity,
-                    "available_balance": available_balance
-                }
-            else:
-                logging.error("USDT 잔고 정보가 없습니다.")
-                return None
+            # UNIFIED 계정의 경우 'totalAvailableBalance'를 사용
+            total_available_balance = float(response['result']['list'][0].get('totalAvailableBalance', '0'))
+            total_equity = float(response['result']['list'][0].get('totalEquity', '0'))
+            logging.info(f"총 자산 (Equity): {total_equity} USDT")
+            logging.info(f"사용 가능 잔액: {total_available_balance} USDT")
+            return {
+                "equity": total_equity,
+                "available_balance": total_available_balance
+            }
         else:
             logging.error(f"잔고 정보를 가져오는 중 에러 발생: {response['retMsg']}")
             return None
