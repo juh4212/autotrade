@@ -54,7 +54,7 @@ def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
         is_leverage (bool): 레버리지 사용 여부
     
     Returns:
-        int: 주문할 수량 (레버리지 포함, 정수)
+        float: 주문할 수량 (레버리지 포함)
     """
     position_usdt = (equity * percentage) / 100
     if is_leverage:
@@ -64,9 +64,6 @@ def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
         order_quantity = position_usdt
         logging.info(f"레버리지를 사용하지 않고 계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%)")
     
-    # 정수로 변환
-    order_quantity = int(round(order_quantity))
-    logging.info(f"정수로 변환된 주문 수량: {order_quantity}")
     return order_quantity
 
 async def place_order(symbol, side, qty, order_type="Market", category="spot", market_unit="value"):
@@ -76,7 +73,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="spot", m
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
-        qty (int): 주문할 수량 (정수)
+        qty (float): 주문할 수량
         order_type (str): 주문 유형 (기본값: "Market")
         category (str): 제품 유형 (기본값: "spot", "linear", "inverse", "option")
         market_unit (str): Spot 시장 주문 시 qty 단위 ("value" 또는 "qty")
