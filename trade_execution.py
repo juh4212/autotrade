@@ -55,7 +55,7 @@ def set_mode(symbol, trade_mode, leverage):
     try:
         resp = bybit_client.switch_margin_mode(
             category='linear',
-            symbol=symbol,
+            symbol=symbol.upper(),
             tradeMode=trade_mode,
             buyLeverage=leverage,
             sellLeverage=leverage
@@ -81,7 +81,7 @@ def get_precisions(symbol):
     try:
         response = bybit_client.get_instruments_info(
             category='linear',
-            symbol=symbol
+            symbol=symbol.upper()
         )
         logging.debug(f"get_precisions 응답: {response}")  # 응답 전체 로그에 기록
 
@@ -99,7 +99,7 @@ def get_precisions(symbol):
             else:
                 qty_precision = 0
 
-            logging.info(f"{symbol}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
+            logging.info(f"{symbol.upper()}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
             return price_precision, qty_precision
         else:
             logging.error(f"상품 정보를 가져오는 중 에러 발생: {response['retMsg']}")
@@ -146,8 +146,8 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
     try:
         params = {
             "category": category,
-            "symbol": symbol,
-            "side": side,
+            "symbol": symbol.upper(),
+            "side": side.capitalize(),  # 'Buy' 또는 'Sell'
             "orderType": order_type,
             "qty": str(qty),
             "timeInForce": "GoodTillCancel",
@@ -159,7 +159,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
             bybit_client.place_order,
             **params
         )
-        logging.info(f"{side} 주문이 실행되었습니다: {response}")
+        logging.info(f"{side.capitalize()} 주문이 실행되었습니다: {response}")
         return response
     except Exception as e:
         logging.error(f"주문 실행 중 에러 발생: {e}")
@@ -170,7 +170,8 @@ async def execute_trade():
     AI의 판단을 받아 매매를 실행하는 함수
     """
     # 잔고 정보 가져오기
-    balance_info = await asyncio.to_thread(get_wallet_balance)
+    # UNIFIED 계정에서 USDT 잔고 조회
+    balance_info = await asyncio.to_thread(get_wallet_balance, account_type='UNIFIED')
     if not balance_info:
         logging.error("잔고 정보를 가져오지 못했습니다.")
         return
