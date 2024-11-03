@@ -88,13 +88,19 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
     try:
         # 레버리지 설정
         if category == "linear":
-            response_leverage = await asyncio.to_thread(
-                bybit_client.set_leverage,
-                symbol=symbol,
-                buy_leverage=leverage if side == "Buy" else None,
-                sell_leverage=leverage if side == "Sell" else None
-            )
-            logging.info(f"레버리지 설정 응답: {response_leverage}")
+            leverage_params = {}
+            if side == "Buy":
+                leverage_params["buy_leverage"] = leverage
+            elif side == "Sell":
+                leverage_params["sell_leverage"] = leverage
+            
+            if leverage_params:
+                response_leverage = await asyncio.to_thread(
+                    bybit_client.set_leverage,
+                    symbol=symbol,
+                    **leverage_params
+                )
+                logging.info(f"레버리지 설정 응답: {response_leverage}")
 
         # 주문 파라미터 설정
         params = {
