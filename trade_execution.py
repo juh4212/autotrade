@@ -4,6 +4,7 @@ import logging
 import os
 from pybit.unified_trading import HTTP
 import asyncio
+import random
 
 # 환경 변수에서 Bybit API 키 및 시크릿 가져오기
 BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
@@ -22,41 +23,47 @@ else:
 
 def determine_trade_percentage():
     """
-    AI 또는 로직을 기반으로 10~30% 사이의 퍼센티지를 결정합니다.
-    현재는 간단한 랜덤 로직을 사용합니다.
+    10~30% 사이의 정수 퍼센티지를 결정합니다.
     """
-    import random
-    percentage = random.uniform(10, 30)
-    logging.info(f"AI에 의해 결정된 거래 퍼센티지: {percentage:.2f}%")
+    percentage = random.randint(10, 30)
+    logging.info(f"AI에 의해 결정된 거래 퍼센티지: {percentage}%")
     return percentage
+
+def decide_long_or_short():
+    """
+    롱(Long) 또는 숏(Short)을 무작위로 결정합니다.
+    """
+    side = random.choice(["Buy", "Sell"])
+    logging.info(f"거래 방향 결정: {side}")
+    return side
 
 def calculate_position_size(equity, percentage, leverage=5):
     """
     포지션 크기를 계산합니다.
-
+    
     Parameters:
         equity (float): 총 자본 (equity)
-        percentage (float): 진입 퍼센티지 (10~30%)
+        percentage (int): 진입 퍼센티지 (10~30%)
         leverage (int): 레버리지 (기본값: 5)
-
+    
     Returns:
-        float: 주문할 USDT 금액
+        float: 주문할 USDT 금액 (레버리지 포함)
     """
-    position_usdt = (equity * (percentage / 100)) / leverage
-    logging.info(f"계산된 포지션 크기: {position_usdt:.2f} USDT (퍼센티지: {percentage:.2f}%, 레버리지: {leverage}x)")
-    return position_usdt
+    position_usdt = (equity * percentage) / 100
+    order_quantity = position_usdt * leverage
+    logging.info(f"계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
+    return order_quantity
 
-async def place_order(symbol, side, qty, leverage=5, order_type="Market"):
+async def place_order(symbol, side, qty, order_type="Market"):
     """
     Bybit에서 주문을 실행합니다.
-
+    
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
-        qty (float): 주문할 수량 (USDT 기준)
-        leverage (int): 레버리지 (기본값: 5)
+        qty (float): 주문할 수량 (USDT 기준, 레버리지 포함)
         order_type (str): 주문 유형 (기본값: "Market")
-
+    
     Returns:
         dict: 주문 응답
     """
@@ -65,11 +72,7 @@ async def place_order(symbol, side, qty, leverage=5, order_type="Market"):
         return None
 
     try:
-        # 레버리지 설정
-        bybit_client.set_leverage(symbol=symbol, buy_leverage=leverage, sell_leverage=leverage)
-        logging.info(f"{symbol}의 레버리지를 {leverage}x로 설정했습니다.")
-
-        # 주문 실행
+        # 주문 실행 (레버리지는 이미 포지션 크기에 포함됨)
         response = await asyncio.to_thread(
             bybit_client.place_active_order,
             symbol=symbol,
