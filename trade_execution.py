@@ -54,7 +54,7 @@ def calculate_position_size(equity, percentage, leverage=5):
     logging.info(f"계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
     return order_quantity
 
-async def place_order(symbol, side, qty, order_type="Market"):
+async def place_order(symbol, side, qty, order_type="Market", category="linear"):
     """
     Bybit에서 주문을 실행합니다.
     
@@ -63,6 +63,7 @@ async def place_order(symbol, side, qty, order_type="Market"):
         side (str): 주문 방향 ("Buy" 또는 "Sell")
         qty (float): 주문할 수량 (USDT 기준, 레버리지 포함)
         order_type (str): 주문 유형 (기본값: "Market")
+        category (str): 제품 유형 (기본값: "linear", "inverse", "spot", "option")
     
     Returns:
         dict: 주문 응답
@@ -74,11 +75,12 @@ async def place_order(symbol, side, qty, order_type="Market"):
     try:
         # 주문 실행 (레버리지는 이미 포지션 크기에 포함됨)
         response = await asyncio.to_thread(
-            bybit_client.order.create,  # 수정된 메서드 이름
+            bybit_client.create_order,
+            category=category,          # 제품 유형 추가
             symbol=symbol,
             side=side,
             order_type=order_type,
-            qty=qty,
+            qty=str(qty),               # Bybit API는 문자열로 qty를 요구할 수 있음
             time_in_force="GoodTillCancel"
         )
         logging.info(f"{side} 주문이 실행되었습니다: {response}")
