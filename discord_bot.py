@@ -5,6 +5,7 @@ import logging
 import os
 import asyncio
 from pybit.unified_trading import HTTP
+from data_collection import get_wallet_balance  # 잔고 정보를 가져오는 함수 임포트
 
 # Discord Intents 설정
 intents = discord.Intents.default()
