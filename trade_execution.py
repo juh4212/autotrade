@@ -6,7 +6,13 @@ import asyncio
 import random
 from pybit.unified_trading import HTTP
 from ai_judgment import get_ai_decision  # ai_judgment.py에서 AI 판단 함수 임포트
-from data_collection import get_wallet_balance, get_market_data  # 데이터 수집 함수 임포트
+from data_collection import (
+    get_account_info,
+    determine_account_mode,
+    get_unified_wallet_balance,
+    get_contract_wallet_balance,
+    get_market_data
+)  # 데이터 수집 함수 임포트
 import pandas as pd
 
 # 로깅 설정
@@ -159,7 +165,11 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
             bybit_client.place_order,
             **params
         )
-        logging.info(f"{side.capitalize()} 주문이 실행되었습니다: {response}")
+        logging.debug(f"place_order 응답: {response}")  # 주문 응답 전체 로그에 기록
+        if response['retCode'] == 0:
+            logging.info(f"{side.capitalize()} 주문이 성공적으로 실행되었습니다: {response}")
+        else:
+            logging.error(f"{side.capitalize()} 주문 실행 실패: {response['retMsg']}")
         return response
     except Exception as e:
         logging.error(f"주문 실행 중 에러 발생: {e}")
@@ -169,9 +179,30 @@ async def execute_trade():
     """
     AI의 판단을 받아 매매를 실행하는 함수
     """
+    # 계정 정보 조회
+    account_info = await asyncio.to_thread(get_account_info)
+    if not account_info:
+        logging.error("계정 정보를 가져오지 못했습니다.")
+        return
+
+    # 계정 유형 결정
+    unified_margin_status = int(account_info.get('unifiedMarginStatus', '1'))  # 기본값: classic
+    account_mode = determine_account_mode(unified_margin_status)
+    if not account_mode:
+        logging.error("알 수 없는 계정 유형으로 인해 거래를 중단합니다.")
+        return
+
+    logging.info(f"현재 계정 유형: {account_mode}")
+
     # 잔고 정보 가져오기
-    # UNIFIED 계정에서 USDT 잔고 조회
-    balance_info = await asyncio.to_thread(get_wallet_balance, account_type='UNIFIED')
+    if account_mode == 'uta2.0':
+        balance_info = get_unified_wallet_balance(account_info)
+    elif account_mode in ['classic', 'uta1.0']:
+        balance_info = await asyncio.to_thread(get_contract_wallet_balance, coin='USDT')
+    else:
+        logging.error("지원되지 않는 계정 유형입니다.")
+        balance_info = None
+
     if not balance_info:
         logging.error("잔고 정보를 가져오지 못했습니다.")
         return
