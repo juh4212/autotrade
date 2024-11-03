@@ -42,8 +42,18 @@ async def execute_trade():
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
             symbol = "BTCUSDT"  # 원하는 심볼로 변경
 
+            # Spot 시장 주문 시 market_unit 설정
+            market_unit = "value" if side == "Buy" else "qty"
+
             # 주문 실행
-            response = await place_order(symbol, side, order_quantity, order_type="Market", category="spot", market_unit="value")
+            response = await place_order(
+                symbol=symbol,
+                side=side,
+                qty=order_quantity,
+                order_type="Market",
+                category="spot",
+                market_unit=market_unit
+            )
 
             if response and response.get("retCode") == 0:
                 logging.info(f"주문 성공: {response}")
