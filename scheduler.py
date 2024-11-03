@@ -40,7 +40,7 @@ async def execute_trade():
             symbol = "BTCUSDT"  # 원하는 심볼로 변경
 
             # 주문 실행
-            response = await place_order(symbol, side, order_quantity, order_type="Market")
+            response = await place_order(symbol, side, order_quantity, order_type="Market", category="linear")
 
             if response and response.get("retCode") == 0:
                 logging.info(f"주문 성공: {response}")
