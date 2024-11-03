@@ -6,7 +6,7 @@ from pybit.unified_trading import HTTP
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # 디버깅을 위해 DEBUG 레벨로 설정
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
         logging.StreamHandler()
@@ -46,16 +46,23 @@ def get_wallet_balance():
             accountType='CONTRACT',  # 계정 유형 설정
             coin='USDT'
         )
+        logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
+
         if response['retCode'] == 0:
-            balance_info = response['result']['list'][0]
-            equity = float(balance_info['equity'])
-            available_balance = float(balance_info['availableBalance'])
-            logging.info(f"총 자산 (Equity): {equity} USDT")
-            logging.info(f"사용 가능 잔액: {available_balance} USDT")
-            return {
-                "equity": equity,
-                "available_balance": available_balance
-            }
+            balance_list = response['result']['list']
+            usdt_balance = next((item for item in balance_list if item['coin'] == 'USDT'), None)
+            if usdt_balance:
+                equity = float(usdt_balance['equity'])
+                available_balance = float(usdt_balance['availableBalance'])
+                logging.info(f"총 자산 (Equity): {equity} USDT")
+                logging.info(f"사용 가능 잔액: {available_balance} USDT")
+                return {
+                    "equity": equity,
+                    "available_balance": available_balance
+                }
+            else:
+                logging.error("USDT 잔고 정보가 없습니다.")
+                return None
         else:
             logging.error(f"잔고 정보를 가져오는 중 에러 발생: {response['retMsg']}")
             return None
@@ -82,6 +89,8 @@ def get_market_data(symbol):
             category='linear',
             symbol=symbol
         )
+        logging.debug(f"get_market_data 응답: {response}")  # 응답 전체 로그에 기록
+
         if response['retCode'] == 0:
             orderbook = response['result']
             logging.info(f"{symbol}의 시장 데이터를 가져왔습니다.")
@@ -114,6 +123,8 @@ def get_recent_trades(symbol, limit=50):
             symbol=symbol,
             limit=limit
         )
+        logging.debug(f"get_recent_trades 응답: {response}")  # 응답 전체 로그에 기록
+
         if response['retCode'] == 0:
             trades = response['result']['list']
             logging.info(f"{symbol}의 최근 거래 내역을 가져왔습니다.")
@@ -148,6 +159,8 @@ def get_kline_data(symbol, interval='15', limit=200):
             interval=interval,
             limit=limit
         )
+        logging.debug(f"get_kline_data 응답: {response}")  # 응답 전체 로그에 기록
+
         if response['retCode'] == 0:
             kline_data = response['result']['list']
             logging.info(f"{symbol}의 캔들 차트 데이터를 가져왔습니다.")
@@ -158,3 +171,5 @@ def get_kline_data(symbol, interval='15', limit=200):
     except Exception as e:
         logging.error(f"캔들 차트 데이터를 가져오는 중 예외 발생: {e}")
         return None
+
+# 필요에 따라 추가적인 데이터 수집 함수들을 구현합니다.
