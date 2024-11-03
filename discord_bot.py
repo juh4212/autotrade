@@ -39,9 +39,9 @@ except (TypeError, ValueError):
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     try:
         bybit_client = HTTP(
-            endpoint="https://api.bybit.com",  # endpoint를 키워드 인자로 전달
             api_key=BYBIT_API_KEY,
-            api_secret=BYBIT_API_SECRET
+            api_secret=BYBIT_API_SECRET,
+            test=False  # 테스트넷을 사용하려면 True로 설정
         )
         logging.info("Bybit 클라이언트가 초기화되었습니다.")
     except Exception as e:
