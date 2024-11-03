@@ -75,7 +75,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
     try:
         # 주문 실행 (레버리지는 이미 포지션 크기에 포함됨)
         response = await asyncio.to_thread(
-            bybit_client.create_order,
+            bybit_client.order.create,  # 수정된 메서드 이름
             category=category,          # 제품 유형 추가
             symbol=symbol,
             side=side,
