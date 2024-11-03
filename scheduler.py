@@ -28,17 +28,24 @@ async def execute_trade():
         # 퍼센티지 결정 (10~30% 정수)
         trade_percentage = determine_trade_percentage()
 
-        # 포지션 크기 계산 (레버리지 포함)
-        order_quantity = calculate_position_size(equity, trade_percentage, leverage=5)
-
         # 롱 또는 숏 결정
         side = decide_long_or_short()
 
+        # 레버리지 사용 여부 결정 (예: 무조건 사용하지 않거나, 조건에 따라 결정)
+        is_leverage = False  # 현재는 Spot 트레이딩만 사용하므로 False
+
+        # 포지션 크기 계산 (레버리지 포함 여부에 따라)
+        order_quantity = calculate_position_size(equity, trade_percentage, leverage=5, is_leverage=is_leverage)
+
         # AI 판단 로그
-        logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: 5x")
+        logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: {'5x' if is_leverage else '1x'}")
 
         # 실제로 주문할 수 있는지 확인
-        if order_quantity <= available_to_withdraw * 5:  # 레버리지 x5 고려
+        # 'market_unit'이 'value'인 경우, 'order_quantity'은 USDT 금액
+        # 따라서, 소수점 2자리로 제한
+        order_quantity = round(order_quantity, 2)
+
+        if order_quantity <= available_to_withdraw * 5:  # 레버리지 x5 고려 (만약 레버리지 사용 시)
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
             symbol = "BTCUSDT"  # 원하는 심볼로 변경
 
