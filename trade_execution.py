@@ -11,7 +11,7 @@ import pandas as pd
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,  # 필요 시 DEBUG로 변경
+    level=logging.DEBUG,  # 디버깅을 위해 DEBUG 레벨로 설정
     format='%(asctime)s:%(levelname)s:%(message)s',
     handlers=[
         logging.StreamHandler()
@@ -83,6 +83,8 @@ def get_precisions(symbol):
             category='linear',
             symbol=symbol
         )
+        logging.debug(f"get_precisions 응답: {response}")  # 응답 전체 로그에 기록
+
         if response['retCode'] == 0:
             resp = response['result']['list'][0]
             price_tick_size = resp['priceFilter']['tickSize']
@@ -178,15 +180,17 @@ async def execute_trade():
         logging.error("유효한 잔고가 없습니다.")
         return
 
+    # 거래할 심볼 설정
+    symbol = "BTCUSDT"  # 필요에 따라 변경
+
     # 현재 시장 데이터 수집
-    symbol = "BTCUSDT"  # 거래할 심볼
     current_market_data = await asyncio.to_thread(get_market_data, symbol)
     if not current_market_data:
         logging.error("시장 데이터를 가져오지 못했습니다.")
         return
 
-    # 최근 거래 내역 가져오기 (예시로 빈 DataFrame 사용)
-    trades_df = pd.DataFrame()
+    # 최근 거래 내역 가져오기
+    trades_df = pd.DataFrame()  # 실제 최근 거래 내역을 가져오는 로직으로 대체 필요
 
     # AI 판단 받아오기
     decision = get_ai_decision(trades_df, current_market_data)
