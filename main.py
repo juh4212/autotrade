@@ -2,7 +2,7 @@
 
 import logging
 import asyncio
-from discord_bot import run_discord_bot  # 변경: run_discord_bot을 비동기로 유지
+from discord_bot import run_discord_bot_task
 from scheduler import start_scheduler
 
 async def main():
@@ -10,7 +10,7 @@ async def main():
     start_scheduler()
 
     # Discord 봇 시작
-    asyncio.create_task(run_discord_bot())
+    run_discord_bot_task(asyncio.get_event_loop())
 
     # 이벤트 루프이므로, 계속 실행 상태를 유지
     await asyncio.Event().wait()  # 무한 대기
