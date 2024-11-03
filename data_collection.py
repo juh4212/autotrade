@@ -33,13 +33,82 @@ else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
 
-def get_wallet_balance(account_type='UNIFIED', coin=None):
+def get_account_info():
     """
-    Bybit 지갑 잔고 정보를 가져오는 함수
+    Bybit 계정 정보를 가져오는 함수
+
+    Returns:
+        dict: 계정 정보 또는 None
+    """
+    if not bybit_client:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return None
+
+    try:
+        response = bybit_client.get_wallet_balance()  # 기본적으로 UNIFIED 계정 정보 조회
+        logging.debug(f"get_account_info 응답: {response}")  # 응답 전체 로그에 기록
+
+        if response['retCode'] == 0:
+            account_info = response['result']['list'][0]
+            unified_margin_status = int(account_info.get('unifiedMarginStatus', '1'))  # 기본값: classic
+            logging.info(f"unifiedMarginStatus: {unified_margin_status}")
+            return account_info
+        else:
+            logging.error(f"계정 정보를 가져오는 중 에러 발생: {response['retMsg']}")
+            return None
+    except Exception as e:
+        logging.error(f"계정 정보를 가져오는 중 예외 발생: {e}")
+        return None
+
+def determine_account_mode(unified_margin_status):
+    """
+    unifiedMarginStatus 값을 기반으로 계정 유형을 결정하는 함수
 
     Parameters:
-        account_type (str): 'UNIFIED' 또는 'CONTRACT'
-        coin (str, optional): 조회할 코인 (예: 'USDT'). CONTRACT 계정일 때 사용.
+        unified_margin_status (int): unifiedMarginStatus 값
+
+    Returns:
+        str: 계정 유형 ('classic', 'uta1.0', 'uta2.0') 또는 None
+    """
+    if unified_margin_status == 1:
+        return 'classic'
+    elif unified_margin_status in [3, 4]:
+        return 'uta1.0'
+    elif unified_margin_status in [5, 6]:
+        return 'uta2.0'
+    else:
+        logging.error(f"알 수 없는 unifiedMarginStatus 값: {unified_margin_status}")
+        return None
+
+def get_unified_wallet_balance(account_info):
+    """
+    UTA 2.0 계정의 USDT 잔고 정보를 가져오는 함수
+
+    Parameters:
+        account_info (dict): 계정 정보
+
+    Returns:
+        dict: 잔고 정보 {'equity': float, 'available_balance': float} 또는 None
+    """
+    try:
+        total_equity = float(account_info.get('totalEquity', '0'))
+        total_available_balance = float(account_info.get('totalAvailableBalance', '0'))
+        logging.info(f"총 자산 (Equity): {total_equity} USDT")
+        logging.info(f"사용 가능 잔액: {total_available_balance} USDT")
+        return {
+            "equity": total_equity,
+            "available_balance": total_available_balance
+        }
+    except Exception as e:
+        logging.error(f"UTA 2.0 잔고 정보를 파싱하는 중 예외 발생: {e}")
+        return None
+
+def get_contract_wallet_balance(coin='USDT'):
+    """
+    CONTRACT 계정의 특정 코인 잔고 정보를 가져오는 함수
+
+    Parameters:
+        coin (str): 조회할 코인 (기본값: 'USDT')
 
     Returns:
         dict: 잔고 정보 {'equity': float, 'available_balance': float} 또는 None
@@ -49,54 +118,31 @@ def get_wallet_balance(account_type='UNIFIED', coin=None):
         return None
 
     try:
-        # CONTRACT 계정일 때만 'coin' 파라미터를 전달
-        if account_type.upper() == 'CONTRACT' and coin:
-            response = bybit_client.get_wallet_balance(
-                accountType='CONTRACT',
-                coin=coin.upper()
-            )
-        else:
-            response = bybit_client.get_wallet_balance(
-                accountType='UNIFIED'
-            )
-
-        logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
+        response = bybit_client.get_wallet_balance(
+            accountType='CONTRACT',
+            coin=coin.upper()
+        )
+        logging.debug(f"get_contract_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
-            if account_type.upper() == 'UNIFIED':
-                # UNIFIED 계정의 경우 'totalEquity'와 'totalAvailableBalance' 사용
-                account_info = response['result']['list'][0]
-                total_equity = float(account_info.get('totalEquity', '0'))
-                total_available_balance = float(account_info.get('totalAvailableBalance', '0'))
-                logging.info(f"총 자산 (Equity): {total_equity} USDT")
-                logging.info(f"사용 가능 잔액: {total_available_balance} USDT")
+            coin_info = response['result']['list'][0]['coin']
+            if coin_info and coin_info['coin'].upper() == coin.upper():
+                equity = float(coin_info.get('equity', '0'))
+                available_balance = float(coin_info.get('availableBalance', '0'))
+                logging.info(f"총 자산 (Equity): {equity} {coin.upper()}")
+                logging.info(f"사용 가능 잔액: {available_balance} {coin.upper()}")
                 return {
-                    "equity": total_equity,
-                    "available_balance": total_available_balance
+                    "equity": equity,
+                    "available_balance": available_balance
                 }
-            elif account_type.upper() == 'CONTRACT' and coin:
-                # CONTRACT 계정의 경우 특정 코인의 잔고 정보 사용
-                coin_info = response['result']['list'][0]['coin']
-                if coin_info and coin_info['coin'].upper() == coin.upper():
-                    equity = float(coin_info.get('equity', '0'))
-                    available_balance = float(coin_info.get('availableBalance', '0'))
-                    logging.info(f"총 자산 (Equity): {equity} {coin.upper()}")
-                    logging.info(f"사용 가능 잔액: {available_balance} {coin.upper()}")
-                    return {
-                        "equity": equity,
-                        "available_balance": available_balance
-                    }
-                else:
-                    logging.error(f"{coin.upper()} 잔고 정보가 없습니다.")
-                    return None
             else:
-                logging.error("올바르지 않은 계정 유형 또는 파라미터.")
+                logging.error(f"{coin.upper()} 잔고 정보가 없습니다.")
                 return None
         else:
-            logging.error(f"잔고 정보를 가져오는 중 에러 발생: {response['retMsg']}")
+            logging.error(f"CONTRACT 잔고 정보를 가져오는 중 에러 발생: {response['retMsg']}")
             return None
     except Exception as e:
-        logging.error(f"잔고 정보를 가져오는 중 예외 발생: {e}")
+        logging.error(f"CONTRACT 잔고 정보를 가져오는 중 예외 발생: {e}")
         return None
 
 def get_market_data(symbol):
