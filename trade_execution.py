@@ -176,6 +176,8 @@ async def execute_trade():
         return
 
     equity = balance_info.get("equity", 0)
+    available_balance = balance_info.get("available_balance", 0)
+
     if equity <= 0:
         logging.error("유효한 잔고가 없습니다.")
         return
