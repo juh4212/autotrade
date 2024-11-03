@@ -54,7 +54,7 @@ def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
         is_leverage (bool): 레버리지 사용 여부
     
     Returns:
-        float: 주문할 수량 (레버리지 포함)
+        int: 주문할 수량 (레버리지 포함, 정수)
     """
     position_usdt = (equity * percentage) / 100
     if is_leverage:
@@ -63,6 +63,10 @@ def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
     else:
         order_quantity = position_usdt
         logging.info(f"레버리지를 사용하지 않고 계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%)")
+    
+    # 정수로 변환
+    order_quantity = int(round(order_quantity))
+    logging.info(f"정수로 변환된 주문 수량: {order_quantity}")
     return order_quantity
 
 async def place_order(symbol, side, qty, order_type="Market", category="spot", market_unit="value"):
@@ -72,7 +76,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="spot", m
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
-        qty (float): 주문할 수량
+        qty (int): 주문할 수량 (정수)
         order_type (str): 주문 유형 (기본값: "Market")
         category (str): 제품 유형 (기본값: "spot", "linear", "inverse", "option")
         market_unit (str): Spot 시장 주문 시 qty 단위 ("value" 또는 "qty")
@@ -91,11 +95,11 @@ async def place_order(symbol, side, qty, order_type="Market", category="spot", m
             "symbol": symbol,
             "side": side,
             "orderType": order_type,
-            "qty": f"{qty:.2f}",               # Bybit API는 문자열로 qty를 요구하며, 소수점 2자리로 제한
-            "price": "0",                      # Market 주문이므로 price는 0으로 설정
+            "qty": str(qty),               # Bybit API는 문자열로 qty를 요구
+            "price": "0",                  # Market 주문이므로 price는 0으로 설정
             "timeInForce": "GoodTillCancel",
             "orderLinkId": f"auto-trade-{int(random.random() * 100000)}",
-            "isLeverage": 0                    # Spot 트레이딩
+            "isLeverage": 0                # Spot 트레이딩
         }
 
         if category == "spot":
