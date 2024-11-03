@@ -38,21 +38,20 @@ async def execute_trade():
         # 포지션 크기 계산 (레버리지 포함 여부에 따라)
         order_quantity = calculate_position_size(equity, trade_percentage, leverage=leverage, is_leverage=is_leverage)
 
-        # Spot 시장 주문 시 market_unit 설정 (Perpetuals에서는 필요 없음)
-        # market_unit = "value" if side == "Buy" else "qty"  # 제거
+        # 'market_unit'은 Perpetuals 거래에서 필요 없으므로 제거
 
         # 'qty' 값을 정수로 설정 (계약 수량)
         qty = int(round(order_quantity))
 
-        logging.info(f"시장 주문을 위한 계약 수량: {qty} (marketUnit: Perpetuals)")
+        logging.info(f"시장 주문을 위한 계약 수량: {qty} (Perpetuals)")
 
         # AI 판단 로그
         logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: {leverage}x")
 
         # 실제로 주문할 수 있는지 확인
-        # 계약 수량이 출금 가능 금액과 연관되지 않으므로, 별도의 로직 필요 (예: 포지션 유지 가능 여부)
+        # 계약 수량이 출금 가능 금액과 직접적으로 연관되지 않으므로, 필요에 따라 추가 로직 구현 가능
         # 여기서는 간단히 주문 가능 여부만 확인
-        can_order = True  # 필요에 따라 로직 추가
+        can_order = True  # 필요에 따라 실제 조건으로 변경
 
         if can_order:
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
