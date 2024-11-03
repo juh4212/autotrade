@@ -33,79 +33,9 @@ else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
 
-def get_account_info():
-    """
-    Bybit 계정 정보를 가져오는 함수
-
-    Returns:
-        dict: 계정 정보 또는 None
-    """
-    if not bybit_client:
-        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
-        return None
-
-    try:
-        response = bybit_client.get_wallet_balance()  # 기본적으로 UNIFIED 계정 정보 조회
-        logging.debug(f"get_account_info 응답: {response}")  # 응답 전체 로그에 기록
-
-        if response['retCode'] == 0:
-            account_info = response['result']['list'][0]
-            unified_margin_status = int(account_info.get('unifiedMarginStatus', '1'))  # 기본값: classic
-            logging.info(f"unifiedMarginStatus: {unified_margin_status}")
-            return account_info
-        else:
-            logging.error(f"계정 정보를 가져오는 중 에러 발생: {response['retMsg']}")
-            return None
-    except Exception as e:
-        logging.error(f"계정 정보를 가져오는 중 예외 발생: {e}")
-        return None
-
-def determine_account_mode(unified_margin_status):
-    """
-    unifiedMarginStatus 값을 기반으로 계정 유형을 결정하는 함수
-
-    Parameters:
-        unified_margin_status (int): unifiedMarginStatus 값
-
-    Returns:
-        str: 계정 유형 ('classic', 'uta1.0', 'uta2.0') 또는 None
-    """
-    if unified_margin_status == 1:
-        return 'classic'
-    elif unified_margin_status in [3, 4]:
-        return 'uta1.0'
-    elif unified_margin_status in [5, 6]:
-        return 'uta2.0'
-    else:
-        logging.error(f"알 수 없는 unifiedMarginStatus 값: {unified_margin_status}")
-        return None
-
-def get_unified_wallet_balance(account_info):
-    """
-    UTA 2.0 계정의 USDT 잔고 정보를 가져오는 함수
-
-    Parameters:
-        account_info (dict): 계정 정보
-
-    Returns:
-        dict: 잔고 정보 {'equity': float, 'available_balance': float} 또는 None
-    """
-    try:
-        total_equity = float(account_info.get('totalEquity', '0'))
-        total_available_balance = float(account_info.get('totalAvailableBalance', '0'))
-        logging.info(f"총 자산 (Equity): {total_equity} USDT")
-        logging.info(f"사용 가능 잔액: {total_available_balance} USDT")
-        return {
-            "equity": total_equity,
-            "available_balance": total_available_balance
-        }
-    except Exception as e:
-        logging.error(f"UTA 2.0 잔고 정보를 파싱하는 중 예외 발생: {e}")
-        return None
-
 def get_contract_wallet_balance(coin='USDT'):
     """
-    CONTRACT 계정의 특정 코인 잔고 정보를 가져오는 함수
+    CLASSIC 계정의 CONTRACT 계정에서 특정 코인 잔고 정보를 가져오는 함수
 
     Parameters:
         coin (str): 조회할 코인 (기본값: 'USDT')
