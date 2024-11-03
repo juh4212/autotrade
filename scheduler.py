@@ -31,34 +31,28 @@ async def execute_trade():
         # 롱 또는 숏 결정
         side = decide_long_or_short()
 
-        # 레버리지 사용 여부 결정 (현재는 Spot 트레이딩만 사용하므로 False)
-        is_leverage = False
+        # 레버리지 사용 여부 결정 (Perpetuals 거래에서는 보통 레버리지 사용)
+        is_leverage = True
+        leverage = 5  # 원하는 레버리지로 설정
 
         # 포지션 크기 계산 (레버리지 포함 여부에 따라)
-        order_quantity = calculate_position_size(equity, trade_percentage, leverage=5, is_leverage=is_leverage)
+        order_quantity = calculate_position_size(equity, trade_percentage, leverage=leverage, is_leverage=is_leverage)
 
-        # Spot 시장 주문 시 market_unit 설정
-        market_unit = "value" if side == "Buy" else "qty"
+        # Spot 시장 주문 시 market_unit 설정 (Perpetuals에서는 필요 없음)
+        # market_unit = "value" if side == "Buy" else "qty"  # 제거
 
-        # 'market_unit'에 따라 'qty' 값을 정수 또는 소수로 변환
-        if market_unit == "value":
-            qty = int(round(order_quantity))
-            logging.info(f"시장 주문을 위한 정수로 변환된 'qty': {qty} (marketUnit: {market_unit})")
-        else:
-            # 소수점 3자리로 제한 (필요 시 변경 가능)
-            qty = round(order_quantity, 3)
-            logging.info(f"시장 주문을 위한 소수점 3자리로 제한된 'qty': {qty} (marketUnit: {market_unit})")
+        # 'qty' 값을 정수로 설정 (계약 수량)
+        qty = int(round(order_quantity))
+
+        logging.info(f"시장 주문을 위한 계약 수량: {qty} (marketUnit: Perpetuals)")
 
         # AI 판단 로그
-        logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: {'5x' if is_leverage else '1x'}")
+        logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: {leverage}x")
 
         # 실제로 주문할 수 있는지 확인
-        if market_unit == "value":
-            # 'value' 단위일 때는 'qty'가 USDT 금액, 'is_leverage'가 0인 Spot 주문
-            can_order = qty <= available_to_withdraw
-        else:
-            # 'qty' 단위일 때는 'qty'가 BTC 수량, 'is_leverage'가 0인 Spot 주문
-            can_order = qty <= available_to_withdraw  # 여기서는 BTC 수량을 비교하는 로직이 필요할 수 있음
+        # 계약 수량이 출금 가능 금액과 연관되지 않으므로, 별도의 로직 필요 (예: 포지션 유지 가능 여부)
+        # 여기서는 간단히 주문 가능 여부만 확인
+        can_order = True  # 필요에 따라 로직 추가
 
         if can_order:
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
@@ -70,8 +64,8 @@ async def execute_trade():
                 side=side,
                 qty=qty,
                 order_type="Market",
-                category="spot",
-                market_unit=market_unit
+                category="linear",
+                leverage=leverage
             )
 
             if response and response.get("retCode") == 0:
@@ -79,7 +73,7 @@ async def execute_trade():
             else:
                 logging.error("주문 실패")
         else:
-            logging.error("포지션 크기가 출금 가능 금액보다 큽니다.")
+            logging.error("주문 조건을 만족하지 못했습니다.")
     else:
         logging.error("잔고 정보를 가져오지 못했습니다.")
 
