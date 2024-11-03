@@ -38,8 +38,6 @@ async def execute_trade():
         # 포지션 크기 계산 (레버리지 포함 여부에 따라)
         order_quantity = calculate_position_size(equity, trade_percentage, leverage=leverage, is_leverage=is_leverage)
 
-        # 'market_unit'은 Perpetuals 거래에서 필요 없으므로 제거
-
         # 'qty' 값을 정수로 설정 (계약 수량)
         qty = int(round(order_quantity))
 
