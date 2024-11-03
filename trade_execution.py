@@ -73,7 +73,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
-        qty (float): 주문할 계약 수량
+        qty (int): 주문할 계약 수량 (정수)
         order_type (str): 주문 유형 (기본값: "Market")
         category (str): 제품 유형 (기본값: "linear" for USDT Perpetuals)
         leverage (int): 레버리지 설정 (기본값: 5)
@@ -93,7 +93,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
                 leverage_params["buy_leverage"] = leverage
             elif side == "Sell":
                 leverage_params["sell_leverage"] = leverage
-            
+
             if leverage_params:
                 response_leverage = await asyncio.to_thread(
                     bybit_client.set_leverage,
