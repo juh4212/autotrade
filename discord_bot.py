@@ -62,10 +62,11 @@ async def on_ready():
     if bybit_client:
         balance_info = await asyncio.to_thread(get_wallet_balance)  # 비동기적으로 잔고 정보 가져오기
         if balance_info:
+            # Perpetuals 잔고 정보 가져오기 (linear 계정)
             equity = balance_info.get("equity", 0)
             available_to_withdraw = balance_info.get("available_to_withdraw", 0)
             balance_message = (
-                f"💰 **현재 잔고 정보:**\n"
+                f"💰 **현재 잔고 정보 (Perpetuals):**\n"
                 f"**Equity:** {equity} USDT\n"
                 f"**Available to Withdraw:** {available_to_withdraw} USDT"
             )
