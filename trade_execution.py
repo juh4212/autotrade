@@ -6,7 +6,7 @@ import asyncio
 import random
 from pybit.unified_trading import HTTP
 from ai_judgment import get_ai_decision  # ai_judgment.py에서 AI 판단 함수 임포트
-from data_collection import get_wallet_balance  # 잔고 정보를 가져오는 함수 임포트
+from data_collection import get_wallet_balance, get_market_data  # 데이터 수집 함수 임포트
 import pandas as pd
 
 # 로깅 설정
@@ -79,27 +79,31 @@ def get_precisions(symbol):
         return None, None
 
     try:
-        resp = bybit_client.get_instruments_info(
+        response = bybit_client.get_instruments_info(
             category='linear',
             symbol=symbol
-        )['result']['list'][0]
+        )
+        if response['retCode'] == 0:
+            resp = response['result']['list'][0]
+            price_tick_size = resp['priceFilter']['tickSize']
+            if '.' in price_tick_size:
+                price_precision = len(price_tick_size.split('.')[1].rstrip('0'))
+            else:
+                price_precision = 0
 
-        price_tick_size = resp['priceFilter']['tickSize']
-        if '.' in price_tick_size:
-            price_precision = len(price_tick_size.split('.')[1].rstrip('0'))
+            qty_step = resp['lotSizeFilter']['qtyStep']
+            if '.' in qty_step:
+                qty_precision = len(qty_step.split('.')[1].rstrip('0'))
+            else:
+                qty_precision = 0
+
+            logging.info(f"{symbol}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
+            return price_precision, qty_precision
         else:
-            price_precision = 0
-
-        qty_step = resp['lotSizeFilter']['qtyStep']
-        if '.' in qty_step:
-            qty_precision = len(qty_step.split('.')[1].rstrip('0'))
-        else:
-            qty_precision = 0
-
-        logging.info(f"{symbol}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
-        return price_precision, qty_precision
+            logging.error(f"상품 정보를 가져오는 중 에러 발생: {response['retMsg']}")
+            return None, None
     except Exception as err:
-        logging.error(f"가격 및 수량 소수점 자릿수 가져오기 중 에러 발생: {err}")
+        logging.error(f"가격 및 수량 소수점 자릿수 가져오기 중 예외 발생: {err}")
         return None, None
 
 def calculate_position_size(equity, percentage, leverage=5):
@@ -174,8 +178,12 @@ async def execute_trade():
         logging.error("유효한 잔고가 없습니다.")
         return
 
-    # 현재 시장 데이터 수집 (필요에 따라 구현)
-    current_market_data = {}
+    # 현재 시장 데이터 수집
+    symbol = "BTCUSDT"  # 거래할 심볼
+    current_market_data = await asyncio.to_thread(get_market_data, symbol)
+    if not current_market_data:
+        logging.error("시장 데이터를 가져오지 못했습니다.")
+        return
 
     # 최근 거래 내역 가져오기 (예시로 빈 DataFrame 사용)
     trades_df = pd.DataFrame()
@@ -198,7 +206,6 @@ async def execute_trade():
     logging.info(f"Percentage: {percentage}")
     logging.info(f"Reason: {reason}")
 
-    symbol = "BTCUSDT"  # 거래할 심볼
     leverage = 5        # 레버리지 설정
     trade_mode = 1      # 0: Cross Margin, 1: Isolated Margin
 
