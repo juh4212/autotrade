@@ -5,6 +5,18 @@ import os
 from pybit.unified_trading import HTTP
 import asyncio
 import random
+from ai_judgment import get_ai_decision  # ai_judgment.py의 함수 임포트
+from data_collection import get_recent_trades, get_current_market_data  # 데이터 수집 함수 임포트
+from discord_bot import post_reflection  # Discord에 반성 내용 게시 함수 임포트
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,  # 필요 시 DEBUG로 변경
+    format='%(asctime)s:%(levelname)s:%(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 # 환경 변수에서 Bybit API 키 및 시크릿 가져오기
 BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
@@ -26,22 +38,6 @@ if BYBIT_API_KEY and BYBIT_API_SECRET:
 else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
-
-def determine_trade_percentage():
-    """
-    10~30% 사이의 정수 퍼센티지를 결정합니다.
-    """
-    percentage = random.randint(10, 30)
-    logging.info(f"AI에 의해 결정된 거래 퍼센티지: {percentage}%")
-    return percentage
-
-def decide_long_or_short():
-    """
-    롱(Long) 또는 숏(Short)을 무작위로 결정합니다.
-    """
-    side = random.choice(["Buy", "Sell"])
-    logging.info(f"거래 방향 결정: {side}")
-    return side
 
 def calculate_position_size(equity, percentage, leverage=5, is_leverage=True):
     """
@@ -115,6 +111,9 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
             "isLeverage": 1                     # 레버리지 사용
         }
 
+        if order_type == "Limit":
+            params["price"] = str(int(params["price"]))  # 가격을 정수로 설정
+
         # 주문 실행
         response = await asyncio.to_thread(
             bybit_client.place_order,
@@ -128,3 +127,84 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
     except Exception as e:
         logging.error(f"주문 실행 중 에러 발생: {e}")
         return None
+
+async def execute_trade():
+    """
+    AI의 판단을 받아 매매를 실행하는 함수
+    """
+    # 데이터 수집
+    trades_df = await asyncio.to_thread(get_recent_trades)  # 최근 거래 내역 가져오기
+    current_market_data = await asyncio.to_thread(get_current_market_data)  # 현재 시장 데이터 가져오기
+
+    # AI 판단 받아오기
+    decision = get_ai_decision(trades_df, current_market_data)
+    if not decision:
+        logging.error("AI의 판단을 받아오지 못했습니다.")
+        return
+
+    decision_type = decision.get('decision')
+    percentage = decision.get('percentage')
+    reason = decision.get('reason')
+
+    if not decision_type or percentage is None:
+        logging.error("AI 판단이 불완전합니다.")
+        return
+
+    logging.info(f"AI Decision: {decision_type.upper()}")
+    logging.info(f"Percentage: {percentage}")
+    logging.info(f"Reason: {reason}")
+
+    if decision_type.lower() == "buy":
+        # 예시: USDT 잔고 조회 및 매수 실행
+        usdt_balance = await asyncio.to_thread(get_usdt_balance)  # USDT 잔고 조회 함수 필요
+        if usdt_balance is None:
+            logging.error("USDT 잔고 조회 실패.")
+            return
+        buy_amount = usdt_balance * (percentage / 100) * 0.9995  # 수수료 고려
+        if buy_amount > 5000:
+            logging.info(f"Buy Order Executed: {percentage}% of available USDT")
+            response = await place_order(
+                symbol="BTCUSDT",
+                side="Buy",
+                qty=calculate_position_size(usdt_balance, percentage, leverage=5, is_leverage=True)
+            )
+            if response and response.get("retCode") == 0:
+                logging.info(f"Buy order executed successfully: {response}")
+            else:
+                logging.error("Buy order failed.")
+        else:
+            logging.warning("Buy Order Failed: Insufficient USDT (less than 5000 USDT)")
+
+    elif decision_type.lower() == "sell":
+        # 예시: 보유 중인 BTC 조회 및 매도 실행
+        btc_balance = await asyncio.to_thread(get_btc_balance)  # BTC 잔고 조회 함수 필요
+        if btc_balance is None:
+            logging.error("BTC 잔고 조회 실패.")
+            return
+        sell_amount = btc_balance * (percentage / 100)
+        current_price = await asyncio.to_thread(get_current_price, "BTCUSDT")  # 현재 가격 조회 함수 필요
+        if sell_amount * current_price > 5000:
+            logging.info(f"Sell Order Executed: {percentage}% of held BTC")
+            response = await place_order(
+                symbol="BTCUSDT",
+                side="Sell",
+                qty=calculate_position_size(current_price, percentage, leverage=5, is_leverage=True)
+            )
+            if response and response.get("retCode") == 0:
+                logging.info(f"Sell order executed successfully: {response}")
+            else:
+                logging.error("Sell order failed.")
+        else:
+            logging.warning("Sell Order Failed: Insufficient BTC (less than 5000 USDT worth)")
+
+    elif decision_type.lower() == "hold":
+        logging.info("Decision is to hold. No action taken.")
+    else:
+        logging.error("Invalid decision received from AI.")
+        return
+
+    # AI의 반성 내용 Discord에 게시
+    reflection = f"Decision: {decision_type.upper()}, Percentage: {percentage}%, Reason: {reason}"
+    await post_reflection(reflection)
+
+    # 추가 로직: 주문 후 기록 저장 등
