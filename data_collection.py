@@ -33,31 +33,65 @@ else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
 
-def get_wallet_balance():
+def get_wallet_balance(account_type='UNIFIED', coin=None):
     """
     Bybit 지갑 잔고 정보를 가져오는 함수
+
+    Parameters:
+        account_type (str): 'UNIFIED' 또는 'CONTRACT'
+        coin (str, optional): 조회할 코인 (예: 'USDT'). CONTRACT 계정일 때 사용.
+
+    Returns:
+        dict: 잔고 정보 {'equity': float, 'available_balance': float} 또는 None
     """
     if not bybit_client:
         logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
         return None
 
     try:
-        response = bybit_client.get_wallet_balance(
-            accountType='UNIFIED',  # 'UNIFIED' 또는 'CONTRACT'로 설정
-            coin='USDT'             # 'USDT' 잔고 조회
-        )
+        # CONTRACT 계정일 때만 'coin' 파라미터를 전달
+        if account_type.upper() == 'CONTRACT' and coin:
+            response = bybit_client.get_wallet_balance(
+                accountType='CONTRACT',
+                coin=coin.upper()
+            )
+        else:
+            response = bybit_client.get_wallet_balance(
+                accountType='UNIFIED'
+            )
+
         logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
-            # UNIFIED 계정의 경우 'totalAvailableBalance'를 사용
-            total_available_balance = float(response['result']['list'][0].get('totalAvailableBalance', '0'))
-            total_equity = float(response['result']['list'][0].get('totalEquity', '0'))
-            logging.info(f"총 자산 (Equity): {total_equity} USDT")
-            logging.info(f"사용 가능 잔액: {total_available_balance} USDT")
-            return {
-                "equity": total_equity,
-                "available_balance": total_available_balance
-            }
+            if account_type.upper() == 'UNIFIED':
+                # UNIFIED 계정의 경우 'totalEquity'와 'totalAvailableBalance' 사용
+                account_info = response['result']['list'][0]
+                total_equity = float(account_info.get('totalEquity', '0'))
+                total_available_balance = float(account_info.get('totalAvailableBalance', '0'))
+                logging.info(f"총 자산 (Equity): {total_equity} USDT")
+                logging.info(f"사용 가능 잔액: {total_available_balance} USDT")
+                return {
+                    "equity": total_equity,
+                    "available_balance": total_available_balance
+                }
+            elif account_type.upper() == 'CONTRACT' and coin:
+                # CONTRACT 계정의 경우 특정 코인의 잔고 정보 사용
+                coin_info = response['result']['list'][0]['coin']
+                if coin_info and coin_info['coin'].upper() == coin.upper():
+                    equity = float(coin_info.get('equity', '0'))
+                    available_balance = float(coin_info.get('availableBalance', '0'))
+                    logging.info(f"총 자산 (Equity): {equity} {coin.upper()}")
+                    logging.info(f"사용 가능 잔액: {available_balance} {coin.upper()}")
+                    return {
+                        "equity": equity,
+                        "available_balance": available_balance
+                    }
+                else:
+                    logging.error(f"{coin.upper()} 잔고 정보가 없습니다.")
+                    return None
+            else:
+                logging.error("올바르지 않은 계정 유형 또는 파라미터.")
+                return None
         else:
             logging.error(f"잔고 정보를 가져오는 중 에러 발생: {response['retMsg']}")
             return None
@@ -82,13 +116,13 @@ def get_market_data(symbol):
     try:
         response = bybit_client.get_orderbook(
             category='linear',
-            symbol=symbol
+            symbol=symbol.upper()
         )
         logging.debug(f"get_market_data 응답: {response}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
             orderbook = response['result']
-            logging.info(f"{symbol}의 시장 데이터를 가져왔습니다.")
+            logging.info(f"{symbol.upper()}의 시장 데이터를 가져왔습니다.")
             return orderbook
         else:
             logging.error(f"시장 데이터를 가져오는 중 에러 발생: {response['retMsg']}")
@@ -115,14 +149,14 @@ def get_recent_trades(symbol, limit=50):
     try:
         response = bybit_client.get_public_trading_records(
             category='linear',
-            symbol=symbol,
+            symbol=symbol.upper(),
             limit=limit
         )
         logging.debug(f"get_recent_trades 응답: {response}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
             trades = response['result']['list']
-            logging.info(f"{symbol}의 최근 거래 내역을 가져왔습니다.")
+            logging.info(f"{symbol.upper()}의 최근 거래 내역을 가져왔습니다.")
             return trades
         else:
             logging.error(f"최근 거래 내역을 가져오는 중 에러 발생: {response['retMsg']}")
@@ -150,7 +184,7 @@ def get_kline_data(symbol, interval='15', limit=200):
     try:
         response = bybit_client.get_kline(
             category='linear',
-            symbol=symbol,
+            symbol=symbol.upper(),
             interval=interval,
             limit=limit
         )
@@ -158,7 +192,7 @@ def get_kline_data(symbol, interval='15', limit=200):
 
         if response['retCode'] == 0:
             kline_data = response['result']['list']
-            logging.info(f"{symbol}의 캔들 차트 데이터를 가져왔습니다.")
+            logging.info(f"{symbol.upper()}의 캔들 차트 데이터를 가져왔습니다.")
             return kline_data
         else:
             logging.error(f"캔들 차트 데이터를 가져오는 중 에러 발생: {response['retMsg']}")
