@@ -43,8 +43,8 @@ def get_wallet_balance():
 
     try:
         response = bybit_client.get_wallet_balance(
-            accountType='CONTRACT',  # 계정 유형 설정
-            coin='USDT'
+            accountType='CONTRACT',  # 'UNIFIED' 또는 'CONTRACT'로 설정
+            coin='USDT'             # 'USDT' 잔고 조회
         )
         logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
 
@@ -52,8 +52,8 @@ def get_wallet_balance():
             balance_list = response['result']['list']
             usdt_balance = next((item for item in balance_list if item['coin'] == 'USDT'), None)
             if usdt_balance:
-                equity = float(usdt_balance['equity'])
-                available_balance = float(usdt_balance['availableBalance'])
+                equity = float(usdt_balance.get('equity', 0))
+                available_balance = float(usdt_balance.get('availableBalance', 0))
                 logging.info(f"총 자산 (Equity): {equity} USDT")
                 logging.info(f"사용 가능 잔액: {available_balance} USDT")
                 return {
