@@ -4,7 +4,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import logging
 from data_collection import get_wallet_balance
 from trade_execution import determine_trade_percentage, calculate_position_size, place_order
-from datetime import datetime  # 추가
+from datetime import datetime
+import asyncio
 
 scheduler = AsyncIOScheduler()
 
