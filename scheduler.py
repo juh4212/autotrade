@@ -34,6 +34,9 @@ async def execute_trade():
         # 롱 또는 숏 결정
         side = decide_long_or_short()
 
+        # AI 판단 로그
+        logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: 5x")
+
         # 실제로 주문할 수 있는지 확인
         if order_quantity <= available_to_withdraw * 5:  # 레버리지 x5 고려
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
