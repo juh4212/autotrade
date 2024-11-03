@@ -75,7 +75,7 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
     try:
         # 주문 실행 (레버리지는 이미 포지션 크기에 포함됨)
         response = await asyncio.to_thread(
-            bybit_client.create_order,  # 수정된 메서드 이름
+            bybit_client.create_order,
             category=category,          # 제품 유형 추가
             symbol=symbol,
             side=side,
@@ -85,6 +85,9 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
         )
         logging.info(f"{side} 주문이 실행되었습니다: {response}")
         return response
+    except AttributeError as ae:
+        logging.error(f"Bybit 클라이언트에 'create_order' 메서드가 없습니다: {ae}")
+        return None
     except Exception as e:
         logging.error(f"주문 실행 중 에러 발생: {e}")
         return None
