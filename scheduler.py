@@ -31,32 +31,44 @@ async def execute_trade():
         # 롱 또는 숏 결정
         side = decide_long_or_short()
 
-        # 레버리지 사용 여부 결정 (예: 무조건 사용하지 않거나, 조건에 따라 결정)
-        is_leverage = False  # 현재는 Spot 트레이딩만 사용하므로 False
+        # 레버리지 사용 여부 결정 (현재는 Spot 트레이딩만 사용하므로 False)
+        is_leverage = False
 
         # 포지션 크기 계산 (레버리지 포함 여부에 따라)
         order_quantity = calculate_position_size(equity, trade_percentage, leverage=5, is_leverage=is_leverage)
+
+        # Spot 시장 주문 시 market_unit 설정
+        market_unit = "value" if side == "Buy" else "qty"
+
+        # 'market_unit'에 따라 'qty' 값을 정수 또는 소수로 변환
+        if market_unit == "value":
+            qty = int(round(order_quantity))
+            logging.info(f"시장 주문을 위한 정수로 변환된 'qty': {qty} (marketUnit: {market_unit})")
+        else:
+            # 소수점 3자리로 제한 (필요 시 변경 가능)
+            qty = round(order_quantity, 3)
+            logging.info(f"시장 주문을 위한 소수점 3자리로 제한된 'qty': {qty} (marketUnit: {market_unit})")
 
         # AI 판단 로그
         logging.info(f"AI 판단: {side} 포지션, 퍼센티지: {trade_percentage}%, 레버리지: {'5x' if is_leverage else '1x'}")
 
         # 실제로 주문할 수 있는지 확인
-        # 'market_unit'이 'value'인 경우, 'order_quantity'은 USDT 금액
-        # 따라서, 소수점 2자리로 제한
-        order_quantity = round(order_quantity, 2)
+        if market_unit == "value":
+            # 'value' 단위일 때는 'qty'가 USDT 금액, 'is_leverage'가 0인 Spot 주문
+            can_order = qty <= available_to_withdraw
+        else:
+            # 'qty' 단위일 때는 'qty'가 BTC 수량, 'is_leverage'가 0인 Spot 주문
+            can_order = qty <= available_to_withdraw  # 여기서는 BTC 수량을 비교하는 로직이 필요할 수 있음
 
-        if order_quantity <= available_to_withdraw * 5:  # 레버리지 x5 고려 (만약 레버리지 사용 시)
+        if can_order:
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
             symbol = "BTCUSDT"  # 원하는 심볼로 변경
-
-            # Spot 시장 주문 시 market_unit 설정
-            market_unit = "value" if side == "Buy" else "qty"
 
             # 주문 실행
             response = await place_order(
                 symbol=symbol,
                 side=side,
-                qty=order_quantity,
+                qty=qty,
                 order_type="Market",
                 category="spot",
                 market_unit=market_unit
