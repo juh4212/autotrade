@@ -13,6 +13,7 @@ BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     bybit_client = HTTP(
+        endpoint="https://api.bybit.com",  # Bybit API 엔드포인트
         api_key=BYBIT_API_KEY,
         api_secret=BYBIT_API_SECRET
     )
@@ -81,7 +82,8 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
             side=side,
             order_type=order_type,
             qty=str(qty),               # Bybit API는 문자열로 qty를 요구할 수 있음
-            time_in_force="GoodTillCancel"
+            time_in_force="GoodTillCancel",
+            isLeverage=0                # Spot trading (margin trading을 원할 경우 1로 설정)
         )
         logging.info(f"{side} 주문이 실행되었습니다: {response}")
         return response
