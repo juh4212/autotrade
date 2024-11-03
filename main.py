@@ -10,7 +10,8 @@ async def main():
     start_scheduler()
 
     # Discord 봇 시작
-    run_discord_bot_task(asyncio.get_event_loop())
+    loop = asyncio.get_event_loop()
+    run_discord_bot_task(loop)
 
     # 이벤트 루프이므로, 계속 실행 상태를 유지
     await asyncio.Event().wait()  # 무한 대기
