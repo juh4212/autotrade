@@ -43,7 +43,7 @@ def decide_long_or_short():
     logging.info(f"거래 방향 결정: {side}")
     return side
 
-def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
+def calculate_position_size(equity, percentage, leverage=5, is_leverage=True):
     """
     포지션 크기를 계산합니다.
     
@@ -66,17 +66,17 @@ def calculate_position_size(equity, percentage, leverage=5, is_leverage=False):
     
     return order_quantity
 
-async def place_order(symbol, side, qty, order_type="Market", category="spot", market_unit="value"):
+async def place_order(symbol, side, qty, order_type="Market", category="linear", leverage=5):
     """
     Bybit에서 주문을 실행합니다.
     
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
-        qty (float): 주문할 수량
+        qty (float): 주문할 계약 수량
         order_type (str): 주문 유형 (기본값: "Market")
-        category (str): 제품 유형 (기본값: "spot", "linear", "inverse", "option")
-        market_unit (str): Spot 시장 주문 시 qty 단위 ("value" 또는 "qty")
+        category (str): 제품 유형 (기본값: "linear" for USDT Perpetuals)
+        leverage (int): 레버리지 설정 (기본값: 5)
     
     Returns:
         dict: 주문 응답
@@ -86,21 +86,28 @@ async def place_order(symbol, side, qty, order_type="Market", category="spot", m
         return None
 
     try:
-        # Spot 시장 주문 시 marketUnit 설정
+        # 레버리지 설정
+        if category == "linear":
+            response_leverage = await asyncio.to_thread(
+                bybit_client.set_leverage,
+                symbol=symbol,
+                buy_leverage=leverage if side == "Buy" else None,
+                sell_leverage=leverage if side == "Sell" else None
+            )
+            logging.info(f"레버리지 설정 응답: {response_leverage}")
+
+        # 주문 파라미터 설정
         params = {
             "category": category,
             "symbol": symbol,
             "side": side,
             "orderType": order_type,
-            "qty": str(qty),               # Bybit API는 문자열로 qty를 요구
-            "price": "0",                  # Market 주문이므로 price는 0으로 설정
+            "qty": str(int(qty)),               # 계약 수량은 정수로 설정
+            "price": "0",                       # Market 주문이므로 price는 0으로 설정
             "timeInForce": "GoodTillCancel",
             "orderLinkId": f"auto-trade-{int(random.random() * 100000)}",
-            "isLeverage": 0                # Spot 트레이딩
+            "isLeverage": 1                     # 레버리지 사용
         }
-
-        if category == "spot":
-            params["marketUnit"] = market_unit  # Spot 시장 주문 시 marketUnit 설정
 
         # 주문 실행
         response = await asyncio.to_thread(
