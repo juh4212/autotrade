@@ -29,19 +29,21 @@ try:
     DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))
     BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
     BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
+    USE_TESTNET = os.getenv('USE_TESTNET', 'False').lower() in ['true', '1', 't']
 except (TypeError, ValueError):
     logging.error('DISCORD_CHANNEL_ID가 올바른 숫자가 아니거나, BYBIT_API_KEY/SECRET이 설정되지 않았습니다.')
     DISCORD_CHANNEL_ID = None
     BYBIT_API_KEY = None
     BYBIT_API_SECRET = None
+    USE_TESTNET = False
 
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     try:
         bybit_client = HTTP(
+            testnet=USE_TESTNET,        # 테스트넷 사용 여부
             api_key=BYBIT_API_KEY,
-            api_secret=BYBIT_API_SECRET,
-            test=False  # 테스트넷을 사용하려면 True로 설정
+            api_secret=BYBIT_API_SECRET
         )
         logging.info("Bybit 클라이언트가 초기화되었습니다.")
     except Exception as e:
