@@ -90,9 +90,9 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
         if category == "linear":
             leverage_params = {}
             if side == "Buy":
-                leverage_params["buy_leverage"] = leverage
+                leverage_params["buyLeverage"] = leverage
             elif side == "Sell":
-                leverage_params["sell_leverage"] = leverage
+                leverage_params["sellLeverage"] = leverage
 
             if leverage_params:
                 response_leverage = await asyncio.to_thread(
