@@ -14,7 +14,7 @@ BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     try:
         bybit_client = HTTP(
-            "https://api.bybit.com",  # endpoint를 위치 인자로 전달
+            endpoint="https://api.bybit.com",  # endpoint를 키워드 인자로 전달
             api_key=BYBIT_API_KEY,
             api_secret=BYBIT_API_SECRET
         )
@@ -79,19 +79,19 @@ async def place_order(symbol, side, qty, order_type="Market", category="spot", m
         return None
 
     try:
-        # Spot 시장 주문 시 marketUnit 설정
+        # Spot 시장 주문 시 market_unit 설정
         params = {
             "category": category,
             "symbol": symbol,
             "side": side,
             "order_type": order_type,
-            "qty": str(qty),  # Bybit API는 문자열로 qty를 요구할 수 있음
+            "qty": str(qty),               # Bybit API는 문자열로 qty를 요구할 수 있음
             "time_in_force": "GoodTillCancel",
-            "isLeverage": 0  # Spot 트레이딩
+            "isLeverage": 0                # Spot 트레이딩
         }
 
         if category == "spot":
-            params["market_unit"] = market_unit  # Spot 시장 주문 시 marketUnit 설정
+            params["marketUnit"] = market_unit  # Spot 시장 주문 시 marketUnit 설정
 
         # 주문 실행
         response = await asyncio.to_thread(
