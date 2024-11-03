@@ -12,12 +12,16 @@ BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 
 # Bybit 클라이언트 초기화
 if BYBIT_API_KEY and BYBIT_API_SECRET:
-    bybit_client = HTTP(
-        endpoint="https://api.bybit.com",  # Bybit API 엔드포인트
-        api_key=BYBIT_API_KEY,
-        api_secret=BYBIT_API_SECRET
-    )
-    logging.info("Bybit 클라이언트가 초기화되었습니다.")
+    try:
+        bybit_client = HTTP(
+            "https://api.bybit.com",  # endpoint를 위치 인자로 전달
+            api_key=BYBIT_API_KEY,
+            api_secret=BYBIT_API_SECRET
+        )
+        logging.info("Bybit 클라이언트가 초기화되었습니다.")
+    except Exception as e:
+        bybit_client = None
+        logging.error(f"Bybit 클라이언트 초기화 실패: {e}")
 else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
@@ -55,7 +59,7 @@ def calculate_position_size(equity, percentage, leverage=5):
     logging.info(f"계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
     return order_quantity
 
-async def place_order(symbol, side, qty, order_type="Market", category="linear"):
+async def place_order(symbol, side, qty, order_type="Market", category="spot", market_unit="value"):
     """
     Bybit에서 주문을 실행합니다.
     
@@ -64,7 +68,8 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
         qty (float): 주문할 수량 (USDT 기준, 레버리지 포함)
         order_type (str): 주문 유형 (기본값: "Market")
-        category (str): 제품 유형 (기본값: "linear", "inverse", "spot", "option")
+        category (str): 제품 유형 (기본값: "spot", "linear", "inverse", "option")
+        market_unit (str): Spot 시장 주문 시 qty 단위 ("value" 또는 "qty")
     
     Returns:
         dict: 주문 응답
@@ -74,16 +79,24 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
         return None
 
     try:
-        # 주문 실행 (레버리지는 이미 포지션 크기에 포함됨)
+        # Spot 시장 주문 시 marketUnit 설정
+        params = {
+            "category": category,
+            "symbol": symbol,
+            "side": side,
+            "order_type": order_type,
+            "qty": str(qty),  # Bybit API는 문자열로 qty를 요구할 수 있음
+            "time_in_force": "GoodTillCancel",
+            "isLeverage": 0  # Spot 트레이딩
+        }
+
+        if category == "spot":
+            params["market_unit"] = market_unit  # Spot 시장 주문 시 marketUnit 설정
+
+        # 주문 실행
         response = await asyncio.to_thread(
             bybit_client.place_active_order,
-            category=category,          # 제품 유형 추가
-            symbol=symbol,
-            side=side,
-            order_type=order_type,
-            qty=str(qty),               # Bybit API는 문자열로 qty를 요구할 수 있음
-            time_in_force="GoodTillCancel",
-            isLeverage=0                # Spot trading (margin trading을 원할 경우 1로 설정)
+            **params
         )
         logging.info(f"{side} 주문이 실행되었습니다: {response}")
         return response
