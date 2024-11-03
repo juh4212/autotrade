@@ -2,12 +2,12 @@
 
 import logging
 import os
-from pybit.unified_trading import HTTP
 import asyncio
 import random
-from ai_judgment import get_ai_decision  # ai_judgment.py의 함수 임포트
-from data_collection import get_recent_trades, get_current_market_data  # 데이터 수집 함수 임포트
-from discord_bot import post_reflection  # Discord에 반성 내용 게시 함수 임포트
+from pybit.unified_trading import HTTP
+from ai_judgment import get_ai_decision  # ai_judgment.py에서 AI 판단 함수 임포트
+from data_collection import get_wallet_balance  # 잔고 정보를 가져오는 함수 임포트
+import pandas as pd
 
 # 로깅 설정
 logging.basicConfig(
@@ -27,7 +27,7 @@ USE_TESTNET = os.getenv('USE_TESTNET', 'False').lower() in ['true', '1', 't']
 if BYBIT_API_KEY and BYBIT_API_SECRET:
     try:
         bybit_client = HTTP(
-            testnet=USE_TESTNET,        # 테스트넷 사용 여부
+            testnet=USE_TESTNET,
             api_key=BYBIT_API_KEY,
             api_secret=BYBIT_API_SECRET
         )
@@ -39,41 +39,97 @@ else:
     bybit_client = None
     logging.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
 
-def calculate_position_size(equity, percentage, leverage=5, is_leverage=True):
+def set_mode(symbol, trade_mode, leverage):
+    """
+    마진 모드와 레버리지를 설정합니다.
+
+    Parameters:
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+        trade_mode (int): 마진 모드 (0: Cross Margin, 1: Isolated Margin)
+        leverage (int): 레버리지 설정 값
+    """
+    if not bybit_client:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return
+
+    try:
+        resp = bybit_client.switch_margin_mode(
+            category='linear',
+            symbol=symbol,
+            tradeMode=trade_mode,
+            buyLeverage=leverage,
+            sellLeverage=leverage
+        )
+        logging.info(f"마진 모드 및 레버리지 설정 응답: {resp}")
+    except Exception as err:
+        logging.error(f"마진 모드 및 레버리지 설정 중 에러 발생: {err}")
+
+def get_precisions(symbol):
+    """
+    지정된 심볼에 대한 가격과 수량의 소수점 자릿수를 가져옵니다.
+
+    Parameters:
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+
+    Returns:
+        tuple: (price_precision, qty_precision)
+    """
+    if not bybit_client:
+        logging.error("Bybit 클라이언트가 초기화되지 않았습니다.")
+        return None, None
+
+    try:
+        resp = bybit_client.get_instruments_info(
+            category='linear',
+            symbol=symbol
+        )['result']['list'][0]
+
+        price_tick_size = resp['priceFilter']['tickSize']
+        if '.' in price_tick_size:
+            price_precision = len(price_tick_size.split('.')[1].rstrip('0'))
+        else:
+            price_precision = 0
+
+        qty_step = resp['lotSizeFilter']['qtyStep']
+        if '.' in qty_step:
+            qty_precision = len(qty_step.split('.')[1].rstrip('0'))
+        else:
+            qty_precision = 0
+
+        logging.info(f"{symbol}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
+        return price_precision, qty_precision
+    except Exception as err:
+        logging.error(f"가격 및 수량 소수점 자릿수 가져오기 중 에러 발생: {err}")
+        return None, None
+
+def calculate_position_size(equity, percentage, leverage=5):
     """
     포지션 크기를 계산합니다.
-    
+
     Parameters:
         equity (float): 총 자본 (equity)
-        percentage (int): 진입 퍼센티지 (10~30%)
+        percentage (int): 진입 퍼센티지 (예: 10-30)
         leverage (int): 레버리지 (기본값: 5)
-        is_leverage (bool): 레버리지 사용 여부
-    
+
     Returns:
-        float: 주문할 수량 (레버리지 포함)
+        float: 주문할 계약 수량
     """
     position_usdt = (equity * percentage) / 100
-    if is_leverage:
-        order_quantity = position_usdt * leverage
-        logging.info(f"레버리지를 사용하여 계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
-    else:
-        order_quantity = position_usdt
-        logging.info(f"레버리지를 사용하지 않고 계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%)")
-    
+    order_quantity = position_usdt * leverage
+    logging.info(f"계산된 포지션 크기: {order_quantity} USDT (퍼센티지: {percentage}%, 레버리지: {leverage}x)")
     return order_quantity
 
-async def place_order(symbol, side, qty, order_type="Market", category="linear", leverage=5):
+async def place_order(symbol, side, qty, order_type="Market", category="linear"):
     """
     Bybit에서 주문을 실행합니다.
-    
+
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
         side (str): 주문 방향 ("Buy" 또는 "Sell")
-        qty (int): 주문할 계약 수량 (정수)
+        qty (float): 주문할 계약 수량
         order_type (str): 주문 유형 (기본값: "Market")
-        category (str): 제품 유형 (기본값: "linear" for USDT Perpetuals)
-        leverage (int): 레버리지 설정 (기본값: 5)
-    
+        category (str): 제품 유형 ("linear" 또는 "inverse")
+
     Returns:
         dict: 주문 응답
     """
@@ -82,48 +138,23 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear",
         return None
 
     try:
-        # 레버리지 설정
-        if category == "linear":
-            leverage_params = {}
-            if side == "Buy":
-                leverage_params["buyLeverage"] = leverage
-            elif side == "Sell":
-                leverage_params["sellLeverage"] = leverage
-
-            if leverage_params:
-                response_leverage = await asyncio.to_thread(
-                    bybit_client.set_leverage,
-                    symbol=symbol,
-                    **leverage_params
-                )
-                logging.info(f"레버리지 설정 응답: {response_leverage}")
-
-        # 주문 파라미터 설정
         params = {
             "category": category,
             "symbol": symbol,
             "side": side,
             "orderType": order_type,
-            "qty": str(int(qty)),               # 계약 수량은 정수로 설정
-            "price": "0",                       # Market 주문이므로 price는 0으로 설정
+            "qty": str(qty),
             "timeInForce": "GoodTillCancel",
             "orderLinkId": f"auto-trade-{int(random.random() * 100000)}",
-            "isLeverage": 1                     # 레버리지 사용
+            "isLeverage": 1
         }
 
-        if order_type == "Limit":
-            params["price"] = str(int(params["price"]))  # 가격을 정수로 설정
-
-        # 주문 실행
         response = await asyncio.to_thread(
             bybit_client.place_order,
             **params
         )
         logging.info(f"{side} 주문이 실행되었습니다: {response}")
         return response
-    except AttributeError as ae:
-        logging.error(f"Bybit 클라이언트에 'place_order' 메서드가 없습니다: {ae}")
-        return None
     except Exception as e:
         logging.error(f"주문 실행 중 에러 발생: {e}")
         return None
@@ -132,9 +163,22 @@ async def execute_trade():
     """
     AI의 판단을 받아 매매를 실행하는 함수
     """
-    # 데이터 수집
-    trades_df = await asyncio.to_thread(get_recent_trades)  # 최근 거래 내역 가져오기
-    current_market_data = await asyncio.to_thread(get_current_market_data)  # 현재 시장 데이터 가져오기
+    # 잔고 정보 가져오기
+    balance_info = await asyncio.to_thread(get_wallet_balance)
+    if not balance_info:
+        logging.error("잔고 정보를 가져오지 못했습니다.")
+        return
+
+    equity = balance_info.get("equity", 0)
+    if equity <= 0:
+        logging.error("유효한 잔고가 없습니다.")
+        return
+
+    # 현재 시장 데이터 수집 (필요에 따라 구현)
+    current_market_data = {}
+
+    # 최근 거래 내역 가져오기 (예시로 빈 DataFrame 사용)
+    trades_df = pd.DataFrame()
 
     # AI 판단 받아오기
     decision = get_ai_decision(trades_df, current_market_data)
@@ -154,57 +198,36 @@ async def execute_trade():
     logging.info(f"Percentage: {percentage}")
     logging.info(f"Reason: {reason}")
 
-    if decision_type.lower() == "buy":
-        # 예시: USDT 잔고 조회 및 매수 실행
-        usdt_balance = await asyncio.to_thread(get_usdt_balance)  # USDT 잔고 조회 함수 필요
-        if usdt_balance is None:
-            logging.error("USDT 잔고 조회 실패.")
-            return
-        buy_amount = usdt_balance * (percentage / 100) * 0.9995  # 수수료 고려
-        if buy_amount > 5000:
-            logging.info(f"Buy Order Executed: {percentage}% of available USDT")
-            response = await place_order(
-                symbol="BTCUSDT",
-                side="Buy",
-                qty=calculate_position_size(usdt_balance, percentage, leverage=5, is_leverage=True)
-            )
-            if response and response.get("retCode") == 0:
-                logging.info(f"Buy order executed successfully: {response}")
-            else:
-                logging.error("Buy order failed.")
-        else:
-            logging.warning("Buy Order Failed: Insufficient USDT (less than 5000 USDT)")
+    symbol = "BTCUSDT"  # 거래할 심볼
+    leverage = 5        # 레버리지 설정
+    trade_mode = 1      # 0: Cross Margin, 1: Isolated Margin
 
-    elif decision_type.lower() == "sell":
-        # 예시: 보유 중인 BTC 조회 및 매도 실행
-        btc_balance = await asyncio.to_thread(get_btc_balance)  # BTC 잔고 조회 함수 필요
-        if btc_balance is None:
-            logging.error("BTC 잔고 조회 실패.")
-            return
-        sell_amount = btc_balance * (percentage / 100)
-        current_price = await asyncio.to_thread(get_current_price, "BTCUSDT")  # 현재 가격 조회 함수 필요
-        if sell_amount * current_price > 5000:
-            logging.info(f"Sell Order Executed: {percentage}% of held BTC")
-            response = await place_order(
-                symbol="BTCUSDT",
-                side="Sell",
-                qty=calculate_position_size(current_price, percentage, leverage=5, is_leverage=True)
-            )
-            if response and response.get("retCode") == 0:
-                logging.info(f"Sell order executed successfully: {response}")
-            else:
-                logging.error("Sell order failed.")
-        else:
-            logging.warning("Sell Order Failed: Insufficient BTC (less than 5000 USDT worth)")
+    # 마진 모드 및 레버리지 설정
+    set_mode(symbol, trade_mode, leverage)
 
-    elif decision_type.lower() == "hold":
-        logging.info("Decision is to hold. No action taken.")
-    else:
-        logging.error("Invalid decision received from AI.")
+    # 가격 및 수량 소수점 자릿수 가져오기
+    price_precision, qty_precision = get_precisions(symbol)
+    if price_precision is None or qty_precision is None:
+        logging.error("가격 및 수량 소수점 자릿수를 가져오지 못했습니다.")
         return
 
-    # AI의 반성 내용 Discord에 게시
-    reflection = f"Decision: {decision_type.upper()}, Percentage: {percentage}%, Reason: {reason}"
-    await post_reflection(reflection)
+    # 포지션 크기 계산
+    qty = calculate_position_size(equity, percentage, leverage=leverage)
 
-    # 추가 로직: 주문 후 기록 저장 등
+    # 수량을 소수점 자릿수에 맞게 반올림
+    qty = round(qty, qty_precision)
+
+    if decision_type.lower() == "buy":
+        logging.info(f"매수 주문을 실행합니다. 수량: {qty}")
+        # 매수 주문 실행
+        response = await place_order(symbol, "Buy", qty, order_type="Market", category="linear")
+    elif decision_type.lower() == "sell":
+        logging.info(f"매도 주문을 실행합니다. 수량: {qty}")
+        # 매도 주문 실행
+        response = await place_order(symbol, "Sell", qty, order_type="Market", category="linear")
+    elif decision_type.lower() == "hold":
+        logging.info("보유 결정입니다. 주문을 실행하지 않습니다.")
+    else:
+        logging.error("AI로부터 유효하지 않은 결정이 전달되었습니다.")
+
+    # 주문 실행 후 추가 작업 (예: 데이터베이스에 기록 저장 등)
