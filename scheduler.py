@@ -3,7 +3,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import logging
 from data_collection import get_wallet_balance
-from trade_execution import determine_trade_percentage, calculate_position_size, place_order
+from trade_execution import determine_trade_percentage, decide_long_or_short, calculate_position_size, place_order
 from datetime import datetime
 import asyncio
 
@@ -25,20 +25,22 @@ async def execute_trade():
         logging.info(f"Total Equity: {equity} USDT")
         logging.info(f"Available to Withdraw: {available_to_withdraw} USDT")
 
-        # AI를 사용하여 퍼센티지 결정
+        # 퍼센티지 결정 (10~30% 정수)
         trade_percentage = determine_trade_percentage()
 
-        # 포지션 크기 계산
-        position_size = calculate_position_size(equity, trade_percentage, leverage=5)
+        # 포지션 크기 계산 (레버리지 포함)
+        order_quantity = calculate_position_size(equity, trade_percentage, leverage=5)
+
+        # 롱 또는 숏 결정
+        side = decide_long_or_short()
 
         # 실제로 주문할 수 있는지 확인
-        if position_size <= available_to_withdraw:
+        if order_quantity <= available_to_withdraw * 5:  # 레버리지 x5 고려
             # 거래할 심볼과 방향 설정 (예: BTCUSDT, Buy/Sell)
             symbol = "BTCUSDT"  # 원하는 심볼로 변경
-            side = "Buy"  # 또는 "Sell"
 
             # 주문 실행
-            response = await place_order(symbol, side, position_size, leverage=5, order_type="Market")
+            response = await place_order(symbol, side, order_quantity, order_type="Market")
 
             if response and response.get("retCode") == 0:
                 logging.info(f"주문 성공: {response}")
