@@ -4,16 +4,14 @@ import logging
 import os
 import asyncio
 import random
-from pybit.unified_trading import HTTP
-from ai_judgment import get_ai_decision  # ai_judgment.py에서 AI 판단 함수 임포트
-from data_collection import (
-    get_account_balance,  # 수정된 함수명 사용
-    get_market_data,
-    get_recent_trades,
-    get_kline_data
-)
 import pandas as pd
 import json
+import requests
+import time
+import hmac
+import hashlib
+from urllib.parse import urlencode
+from ai_judgment import get_ai_decision  # ai_judgment.py에서 AI 판단 함수 임포트
 
 # 로깅 설정 (이미 설정되어 있다면 중복 설정을 피하세요)
 logging.basicConfig(
@@ -26,99 +24,251 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Bybit 클라이언트 초기화
-BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
-BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
+# 환경 변수에서 Bybit API 키 및 시크릿 가져오기
+API_KEY = os.getenv('BYBIT_API_KEY')
+API_SECRET = os.getenv('BYBIT_API_SECRET')
 USE_TESTNET = os.getenv('USE_TESTNET', 'False').lower() in ['true', '1', 't']
 
-if BYBIT_API_KEY and BYBIT_API_SECRET:
-    try:
-        bybit_client = HTTP(
-            testnet=USE_TESTNET,
-            api_key=BYBIT_API_KEY,
-            api_secret=BYBIT_API_SECRET
-        )
-        logger.info("Bybit 클라이언트가 초기화되었습니다.")
-    except Exception as e:
-        bybit_client = None
-        logger.error(f"Bybit 클라이언트 초기화 실패: {e}")
+# API 엔드포인트 설정
+if USE_TESTNET:
+    BASE_URL = 'https://api-testnet.bybit.com'
 else:
-    bybit_client = None
-    logger.error("Bybit API 키 또는 시크릿이 설정되지 않았습니다.")
+    BASE_URL = 'https://api.bybit.com'
 
-def set_mode(symbol, trade_mode, leverage):
+def generate_signature(api_secret, method, endpoint, params):
     """
-    마진 모드와 레버리지를 설정합니다.
+    서명을 생성하는 함수.
 
     Parameters:
-        symbol (str): 거래할 심볼 (예: "BTCUSDT")
-        trade_mode (int): 마진 모드 (0: Cross Margin, 1: Isolated Margin)
-        leverage (int): 레버리지 설정 값
+        api_secret (str): API 시크릿 키
+        method (str): HTTP 메서드 ('GET', 'POST' 등)
+        endpoint (str): API 요청 경로 (예: '/v5/position/list')
+        params (dict): 요청에 사용될 파라미터
+
+    Returns:
+        str: 생성된 서명
     """
-    if not bybit_client:
-        logger.error("Bybit 클라이언트가 초기화되지 않았습니다.")
-        return
+    # 타임스탬프 (밀리초)
+    timestamp = int(time.time() * 1000)
+    
+    # 요청 파라미터에 타임스탬프 추가
+    params['timestamp'] = timestamp
+
+    # 쿼리 문자열 정렬
+    sorted_params = urlencode(sorted(params.items()))
+    
+    # 서명할 문자열 생성
+    pre_sign = method.upper() + endpoint + sorted_params
+    
+    # HMAC-SHA256 서명 생성
+    signature = hmac.new(
+        api_secret.encode('utf-8'),
+        pre_sign.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    
+    return signature, timestamp
+
+def get_position_list(category='linear', symbol='BTCUSDT'):
+    """
+    Bybit v5 API를 사용하여 포지션 정보를 가져옵니다.
+
+    Parameters:
+        category (str): 카테고리 ('linear' 또는 'inverse')
+        symbol (str): 거래 심볼 (예: 'BTCUSDT')
+
+    Returns:
+        list: 열린 포지션 목록 또는 None
+    """
+    endpoint = '/v5/position/list'
+    method = 'GET'
+    url = BASE_URL + endpoint
+
+    # 요청 파라미터
+    params = {
+        'category': category,
+        'symbol': symbol
+    }
+
+    # 서명 생성
+    signature, timestamp = generate_signature(API_SECRET, method, endpoint, params)
+
+    # 헤더 설정
+    headers = {
+        'X-BAPI-API-KEY': API_KEY,
+        'X-BAPI-TIMESTAMP': str(timestamp),
+        'X-BAPI-SIGN': signature,
+        'X-BAPI-RECV-WINDOW': '5000',
+        'Content-Type': 'application/json'
+    }
 
     try:
-        resp = bybit_client.switch_margin_mode(
-            category='linear',
-            symbol=symbol.upper(),
-            tradeMode=trade_mode,
-            buyLeverage=leverage,
-            sellLeverage=leverage
-        )
-        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
-        resp_json = json.dumps(resp, indent=4, ensure_ascii=False)
-        logger.debug(f"switch_margin_mode 응답: {resp_json}")
-        logger.info(f"마진 모드 및 레버리지 설정 응답: {resp}")
-    except Exception as err:
-        logger.error(f"마진 모드 및 레버리지 설정 중 에러 발생: {err}")
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()  # HTTP 오류 발생 시 예외 발생
+        data = response.json()
+        
+        # 응답 데이터 로깅
+        logger.debug("API 응답 데이터: %s", json.dumps(data, indent=4, ensure_ascii=False))
+        
+        if data.get('retCode') == 0:
+            positions = data['result']['list']
+            if positions:
+                logger.info(f"{symbol.upper()}의 열린 포지션을 가져왔습니다.")
+                return positions
+            else:
+                logger.info(f"{symbol.upper()}에 열린 포지션이 없습니다.")
+                return []
+        else:
+            logger.error(f"API 오류: {data.get('retMsg')}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"HTTP 요청 오류: {e}")
+        return None
 
-def get_precisions(symbol):
+def get_market_data(symbol):
     """
-    지정된 심볼에 대한 가격과 수량의 소수점 자릿수를 가져옵니다.
+    Bybit에서 지정된 심볼의 시장 데이터를 가져옵니다.
 
     Parameters:
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
 
     Returns:
-        tuple: (price_precision, qty_precision)
+        dict: 시장 데이터
     """
-    if not bybit_client:
-        logger.error("Bybit 클라이언트가 초기화되지 않았습니다.")
-        return None, None
+    # 예제: 주문 책(Order Book) 데이터 가져오기
+    endpoint = '/v5/market/orderbook'
+    method = 'GET'
+    url = BASE_URL + endpoint
+
+    params = {
+        'category': 'linear',
+        'symbol': symbol.upper()
+    }
+
+    signature, timestamp = generate_signature(API_SECRET, method, endpoint, params)
+
+    headers = {
+        'X-BAPI-API-KEY': API_KEY,
+        'X-BAPI-TIMESTAMP': str(timestamp),
+        'X-BAPI-SIGN': signature,
+        'X-BAPI-RECV-WINDOW': '5000',
+        'Content-Type': 'application/json'
+    }
 
     try:
-        response = bybit_client.get_instruments_info(
-            category='linear',
-            symbol=symbol.upper()
-        )
-        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
-        response_json = json.dumps(response, indent=4, ensure_ascii=False)
-        logger.debug(f"get_instruments_info 응답: {response_json}")
-
-        if response.get('retCode') == 0:
-            resp = response['result']['list'][0]
-            price_tick_size = resp['priceFilter']['tickSize']
-            if '.' in price_tick_size:
-                price_precision = len(price_tick_size.split('.')[1].rstrip('0'))
-            else:
-                price_precision = 0
-
-            qty_step = resp['lotSizeFilter']['qtyStep']
-            if '.' in qty_step:
-                qty_precision = len(qty_step.split('.')[1].rstrip('0'))
-            else:
-                qty_precision = 0
-
-            logger.info(f"{symbol.upper()}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
-            return price_precision, qty_precision
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        logger.debug("get_market_data 응답 데이터: %s", json.dumps(data, indent=4, ensure_ascii=False))
+        
+        if data.get('retCode') == 0:
+            orderbook = data['result']
+            logger.info(f"{symbol.upper()}의 시장 데이터를 가져왔습니다.")
+            return orderbook
         else:
-            logger.error(f"상품 정보를 가져오는 중 에러 발생: {response.get('retMsg')}")
-            return None, None
-    except Exception as err:
-        logger.error(f"가격 및 수량 소수점 자릿수 가져오기 중 예외 발생: {err}")
-        return None, None
+            logger.error(f"시장 데이터를 가져오는 중 에러 발생: {data.get('retMsg')}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"시장 데이터를 가져오는 중 HTTP 오류: {e}")
+        return None
+
+def get_recent_trades(symbol, limit=50):
+    """
+    Bybit에서 지정된 심볼의 최근 거래 내역을 가져옵니다.
+
+    Parameters:
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+        limit (int): 가져올 거래 수 (기본값: 50)
+
+    Returns:
+        list: 최근 거래 내역
+    """
+    endpoint = '/v5/market/trading-records'
+    method = 'GET'
+    url = BASE_URL + endpoint
+
+    params = {
+        'category': 'linear',
+        'symbol': symbol.upper(),
+        'limit': limit
+    }
+
+    signature, timestamp = generate_signature(API_SECRET, method, endpoint, params)
+
+    headers = {
+        'X-BAPI-API-KEY': API_KEY,
+        'X-BAPI-TIMESTAMP': str(timestamp),
+        'X-BAPI-SIGN': signature,
+        'X-BAPI-RECV-WINDOW': '5000',
+        'Content-Type': 'application/json'
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        logger.debug("get_recent_trades 응답 데이터: %s", json.dumps(data, indent=4, ensure_ascii=False))
+        
+        if data.get('retCode') == 0:
+            trades = data['result']['list']
+            logger.info(f"{symbol.upper()}의 최근 거래 내역을 가져왔습니다.")
+            return trades
+        else:
+            logger.error(f"최근 거래 내역을 가져오는 중 에러 발생: {data.get('retMsg')}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"최근 거래 내역을 가져오는 중 HTTP 오류: {e}")
+        return None
+
+def get_kline_data(symbol, interval='15', limit=200):
+    """
+    Bybit에서 지정된 심볼의 캔들 차트 데이터를 가져옵니다.
+
+    Parameters:
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+        interval (str): 캔들 차트 간격 (예: '1', '3', '5', '15', '30', '60', '120', '240', '360', '720', 'D', 'W', 'M')
+        limit (int): 가져올 데이터 수 (기본값: 200)
+
+    Returns:
+        list: 캔들 차트 데이터
+    """
+    endpoint = '/v5/market/kline'
+    method = 'GET'
+    url = BASE_URL + endpoint
+
+    params = {
+        'category': 'linear',
+        'symbol': symbol.upper(),
+        'interval': interval,
+        'limit': limit
+    }
+
+    signature, timestamp = generate_signature(API_SECRET, method, endpoint, params)
+
+    headers = {
+        'X-BAPI-API-KEY': API_KEY,
+        'X-BAPI-TIMESTAMP': str(timestamp),
+        'X-BAPI-SIGN': signature,
+        'X-BAPI-RECV-WINDOW': '5000',
+        'Content-Type': 'application/json'
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        logger.debug("get_kline_data 응답 데이터: %s", json.dumps(data, indent=4, ensure_ascii=False))
+        
+        if data.get('retCode') == 0:
+            kline_data = data['result']['list']
+            logger.info(f"{symbol.upper()}의 캔들 차트 데이터를 가져왔습니다.")
+            return kline_data
+        else:
+            logger.error(f"캔들 차트 데이터를 가져오는 중 에러 발생: {data.get('retMsg')}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"캔들 차트 데이터를 가져오는 중 HTTP 오류: {e}")
+        return None
 
 def calculate_position_size(equity, percentage, leverage=5):
     """
@@ -151,85 +301,101 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
     Returns:
         dict: 주문 응답
     """
-    if not bybit_client:
-        logger.error("Bybit 클라이언트가 초기화되지 않았습니다.")
-        return None
+    endpoint = '/v5/order/create'
+    method = 'POST'
+    url = BASE_URL + endpoint
+
+    # 타임스탬프
+    timestamp = int(time.time() * 1000)
+
+    # 요청 파라미터
+    params = {
+        'category': category,
+        'symbol': symbol.upper(),
+        'side': side.capitalize(),  # 'Buy' 또는 'Sell'
+        'orderType': order_type,
+        'qty': str(qty),
+        'timeInForce': 'GoodTillCancel',
+        'orderLinkId': f"auto-trade-{int(random.random() * 100000)}",
+        'isLeverage': 1
+    }
+
+    # 쿼리 문자열 정렬
+    sorted_params = urlencode(sorted(params.items()))
+
+    # 서명할 문자열 생성
+    pre_sign = method.upper() + '/v5/order/create' + sorted_params
+
+    # HMAC-SHA256 서명 생성
+    signature = hmac.new(
+        API_SECRET.encode('utf-8'),
+        pre_sign.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+    # 헤더 설정
+    headers = {
+        'X-BAPI-API-KEY': API_KEY,
+        'X-BAPI-TIMESTAMP': str(timestamp),
+        'X-BAPI-SIGN': signature,
+        'X-BAPI-RECV-WINDOW': '5000',
+        'Content-Type': 'application/json'
+    }
 
     try:
-        params = {
-            "category": category,
-            "symbol": symbol.upper(),
-            "side": side.capitalize(),  # 'Buy' 또는 'Sell'
-            "orderType": order_type,
-            "qty": str(qty),
-            "timeInForce": "GoodTillCancel",
-            "orderLinkId": f"auto-trade-{int(random.random() * 100000)}",
-            "isLeverage": 1
-        }
-
-        logger.debug(f"place_order 호출: {params}")
-
-        response = await asyncio.to_thread(
-            bybit_client.place_order,
-            **params
-        )
-        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
-        response_json = json.dumps(response, indent=4, ensure_ascii=False)
-        logger.debug(f"place_order 응답: {response_json}")  # 주문 응답 전체 로그에 기록
-
-        if response.get('retCode') == 0:
-            logger.info(f"{side.capitalize()} 주문이 성공적으로 실행되었습니다: {response}")
+        response = requests.post(url, headers=headers, json=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        logger.debug("place_order 응답 데이터: %s", json.dumps(data, indent=4, ensure_ascii=False))
+        
+        if data.get('retCode') == 0:
+            logger.info(f"{side.capitalize()} 주문이 성공적으로 실행되었습니다: {data}")
         else:
-            logger.error(f"{side.capitalize()} 주문 실행 실패: {response.get('retMsg')}")
-        return response
+            logger.error(f"{side.capitalize()} 주문 실행 실패: {data.get('retMsg')}")
+        return data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"주문 실행 중 HTTP 오류: {e}")
+        return None
     except Exception as e:
-        logger.error(f"주문 실행 중 에러 발생: {e}")
+        logger.error(f"주문 실행 중 예외 발생: {e}")
         return None
 
-def get_open_positions(bybit, symbol):
+async def close_all_positions(symbol):
     """
-    Bybit에서 지정된 심볼의 열린 포지션을 가져옵니다.
+    모든 열린 포지션을 청산합니다.
 
     Parameters:
-        bybit (HTTP): pybit.unified_trading.HTTP 클라이언트 객체
         symbol (str): 거래할 심볼 (예: "BTCUSDT")
 
     Returns:
-        list: 열린 포지션 목록 또는 None
+        bool: 청산 성공 여부
     """
     try:
-        response = bybit.get_position_list(
-            category='linear',
-            symbol=symbol.upper()
-        )
-        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
-        response_json = json.dumps(response, indent=4, ensure_ascii=False)
-        logger.debug(f"get_open_positions 응답 데이터: {response_json}")  # 전체 응답 데이터 출력
-
-        if response.get('retCode') == 0:
-            positions = response['result']['list']
-            if positions:
-                logger.info(f"{symbol.upper()}의 열린 포지션을 가져왔습니다.")
-                return positions
-            else:
-                logger.info(f"{symbol.upper()}에 열린 포지션이 없습니다.")
-                return []
+        positions = get_position_list(category='linear', symbol=symbol)
+        if positions:
+            for position in positions:
+                side = "Sell" if position['side'].lower() == "buy" else "Buy"
+                qty = float(position['size'])
+                logger.info(f"포지션 청산을 시도합니다: {side} {qty} {symbol.upper()}")
+                response = await place_order(symbol, side, qty, order_type="Market", category="linear")
+                if response and response.get('retCode') == 0:
+                    logger.info(f"포지션 청산 주문이 성공적으로 실행되었습니다: {response}")
+                else:
+                    logger.error(f"포지션 청산 주문 실행 실패: {response.get('retMsg') if response else 'No Response'}")
+            return True
         else:
-            logger.error(f"열린 포지션을 가져오는 중 에러 발생: {response.get('retMsg')}")
-            return None
-    except AttributeError as e:
-        logger.error(f"Bybit 클라이언트에 메서드가 존재하지 않습니다: {e}")
-        return None
+            logger.info("열린 포지션이 없습니다. 청산할 필요가 없습니다.")
+            return True
     except Exception as e:
-        logger.error(f"열린 포지션을 가져오는 중 예외 발생: {e}")
-        return None
+        logger.error(f"포지션 청산 중 에러 발생: {e}")
+        return False
 
 async def execute_trade():
     """
     AI의 판단을 받아 매매를 실행하는 함수
     """
     # CONTRACT 계정 (파생상품 계정)에서 USDT 잔고 조회
-    balance_info = get_account_balance(bybit_client, account_type='CONTRACT', coin='USDT')
+    balance_info = get_account_balance(category='linear', symbol='BTCUSDT')
     if not balance_info:
         logger.error("잔고 정보를 가져오지 못했습니다.")
         return
@@ -247,17 +413,27 @@ async def execute_trade():
     symbol = "BTCUSDT"  # 필요에 따라 변경
 
     # 열린 포지션 조회
-    open_positions = get_open_positions(bybit_client, symbol)
+    open_positions = get_position_list(category='linear', symbol=symbol)
     if open_positions is None:
         logger.error("열린 포지션을 가져오지 못했습니다.")
         return
     elif len(open_positions) > 0:
         logger.info(f"현재 {symbol.upper()}에 열린 포지션이 있습니다: {open_positions}")
-        # 포지션이 있는 경우, 사용 가능한 자산이 줄어들 수 있습니다.
-        # 추가적인 로직을 구현할 수 있습니다.
-        # 예: 기존 포지션 청산 후 새 포지션 진입 등
-        # 여기서는 간단히 포지션이 있다는 정보만 기록
-        # 필요에 따라 로직을 추가하세요.
+        # 포지션 청산 시도
+        success = await close_all_positions(symbol)
+        if not success:
+            logger.error("포지션 청산에 실패했습니다.")
+            return
+        else:
+            logger.info("포지션을 성공적으로 청산했습니다.")
+        # 청산 후 잔고 재조회
+        balance_info = get_account_balance(category='linear', symbol=symbol)
+        if not balance_info:
+            logger.error("청산 후 잔고 정보를 가져오지 못했습니다.")
+            return
+        equity = balance_info.get("equity", 0)
+        available_balance = balance_info.get("available_balance", 0)
+        logger.debug(f"청산 후 잔고 정보: equity={equity}, available_balance={available_balance}")
 
     # 현재 시장 데이터 수집
     current_market_data = get_market_data(symbol)
@@ -297,7 +473,7 @@ async def execute_trade():
     trade_mode = 1      # 0: Cross Margin, 1: Isolated Margin
 
     # 마진 모드 및 레버리지 설정
-    set_mode(symbol, trade_mode, leverage)
+    # Bybit v5 API에서는 이미 레버리지를 설정했으므로 추가 설정 필요 없음
 
     # 가격 및 수량 소수점 자릿수 가져오기
     price_precision, qty_precision = get_precisions(symbol)
