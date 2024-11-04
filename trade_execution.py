@@ -97,7 +97,7 @@ def get_precisions(symbol):
         response_json = json.dumps(response, indent=4, ensure_ascii=False)
         logger.debug(f"get_instruments_info 응답: {response_json}")
 
-        if response['retCode'] == 0:
+        if response.get('retCode') == 0:
             resp = response['result']['list'][0]
             price_tick_size = resp['priceFilter']['tickSize']
             if '.' in price_tick_size:
@@ -114,7 +114,7 @@ def get_precisions(symbol):
             logger.info(f"{symbol.upper()}의 가격 소수점 자릿수: {price_precision}, 수량 소수점 자릿수: {qty_precision}")
             return price_precision, qty_precision
         else:
-            logger.error(f"상품 정보를 가져오는 중 에러 발생: {response['retMsg']}")
+            logger.error(f"상품 정보를 가져오는 중 에러 발생: {response.get('retMsg')}")
             return None, None
     except Exception as err:
         logger.error(f"가격 및 수량 소수점 자릿수 가져오기 중 예외 발생: {err}")
@@ -177,10 +177,10 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
         response_json = json.dumps(response, indent=4, ensure_ascii=False)
         logger.debug(f"place_order 응답: {response_json}")  # 주문 응답 전체 로그에 기록
 
-        if response['retCode'] == 0:
+        if response.get('retCode') == 0:
             logger.info(f"{side.capitalize()} 주문이 성공적으로 실행되었습니다: {response}")
         else:
-            logger.error(f"{side.capitalize()} 주문 실행 실패: {response['retMsg']}")
+            logger.error(f"{side.capitalize()} 주문 실행 실패: {response.get('retMsg')}")
         return response
     except Exception as e:
         logger.error(f"주문 실행 중 에러 발생: {e}")
