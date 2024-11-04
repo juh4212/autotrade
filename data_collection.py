@@ -2,6 +2,7 @@
 
 import logging
 import os
+import json
 from pybit.unified_trading import HTTP
 
 # 로깅 설정
@@ -77,7 +78,9 @@ def get_wallet_balance(account_type='CONTRACT', coin='USDT'):
             logging.error("올바르지 않은 계정 유형 또는 파라미터.")
             return None
 
-        logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logging.debug(f"get_wallet_balance 응답: {response_json}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
             if account_type_str == 'CONTRACT' and coin_str:
@@ -157,7 +160,9 @@ def get_market_data(symbol):
             category='linear',
             symbol=symbol.upper()
         )
-        logging.debug(f"get_market_data 응답: {response}")  # 응답 전체 로그에 기록
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logging.debug(f"get_market_data 응답: {response_json}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
             orderbook = response['result']
@@ -191,7 +196,9 @@ def get_recent_trades(symbol, limit=50):
             symbol=symbol.upper(),
             limit=limit
         )
-        logging.debug(f"get_recent_trades 응답: {response}")  # 응답 전체 로그에 기록
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logging.debug(f"get_recent_trades 응답: {response_json}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
             trades = response['result']['list']
@@ -227,7 +234,9 @@ def get_kline_data(symbol, interval='15', limit=200):
             interval=interval,
             limit=limit
         )
-        logging.debug(f"get_kline_data 응답: {response}")  # 응답 전체 로그에 기록
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logging.debug(f"get_kline_data 응답: {response_json}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
             kline_data = response['result']['list']
