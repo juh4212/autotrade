@@ -65,6 +65,9 @@ def set_mode(symbol, trade_mode, leverage):
             buyLeverage=leverage,
             sellLeverage=leverage
         )
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        resp_json = json.dumps(resp, indent=4, ensure_ascii=False)
+        logging.debug(f"switch_margin_mode 응답: {resp_json}")
         logging.info(f"마진 모드 및 레버리지 설정 응답: {resp}")
     except Exception as err:
         logging.error(f"마진 모드 및 레버리지 설정 중 에러 발생: {err}")
@@ -88,7 +91,9 @@ def get_precisions(symbol):
             category='linear',
             symbol=symbol.upper()
         )
-        logging.debug(f"get_precisions 응답: {response}")  # 응답 전체 로그에 기록
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logging.debug(f"get_instruments_info 응답: {response_json}")
 
         if response['retCode'] == 0:
             resp = response['result']['list'][0]
@@ -166,7 +171,10 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
             bybit_client.place_order,
             **params
         )
-        logging.debug(f"place_order 응답: {response}")  # 주문 응답 전체 로그에 기록
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logging.debug(f"place_order 응답: {response_json}")  # 주문 응답 전체 로그에 기록
+
         if response['retCode'] == 0:
             logging.info(f"{side.capitalize()} 주문이 성공적으로 실행되었습니다: {response}")
         else:
