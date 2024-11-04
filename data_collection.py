@@ -49,12 +49,27 @@ def get_wallet_balance(account_type='CONTRACT', coin='USDT'):
         return None
 
     try:
-        if account_type.upper() == 'CONTRACT' and coin:
+        logging.debug(f"get_wallet_balance 호출: account_type={account_type}, coin={coin}")
+        logging.debug(f"account_type type: {type(account_type)}, coin type: {type(coin)}")
+
+        if isinstance(account_type, str):
+            account_type_str = account_type.upper()
+        else:
+            logging.error(f"account_type이 문자열이 아닙니다: {account_type}")
+            return None
+
+        if isinstance(coin, str):
+            coin_str = coin.upper()
+        else:
+            logging.error(f"coin이 문자열이 아닙니다: {coin}")
+            return None
+
+        if account_type_str == 'CONTRACT' and coin_str:
             response = bybit_client.get_wallet_balance(
                 accountType='CONTRACT',
-                coin=coin.upper()
+                coin=coin_str
             )
-        elif account_type.upper() == 'SPOT':
+        elif account_type_str == 'SPOT':
             response = bybit_client.get_wallet_balance(
                 accountType='SPOT'
             )
@@ -65,24 +80,28 @@ def get_wallet_balance(account_type='CONTRACT', coin='USDT'):
         logging.debug(f"get_wallet_balance 응답: {response}")  # 응답 전체 로그에 기록
 
         if response['retCode'] == 0:
-            if account_type.upper() == 'CONTRACT' and coin:
+            if account_type_str == 'CONTRACT' and coin_str:
                 # CONTRACT 계정의 경우 특정 코인의 잔고 정보 사용
                 coin_info = response['result']['list'][0]
-                if coin_info and coin_info['coin'].upper() == coin.upper():
+                logging.debug(f"coin_info: {coin_info}")
+                logging.debug(f"coin_info type: {type(coin_info)}")
+                if isinstance(coin_info, dict) and 'coin' in coin_info and isinstance(coin_info['coin'], str) and coin_info['coin'].upper() == coin_str:
                     equity = float(coin_info.get('equity', '0'))
                     available_balance = float(coin_info.get('availableBalance', '0'))
-                    logging.info(f"총 자산 (Equity): {equity} {coin.upper()}")
-                    logging.info(f"사용 가능 잔액: {available_balance} {coin.upper()}")
+                    logging.info(f"총 자산 (Equity): {equity} {coin_str}")
+                    logging.info(f"사용 가능 잔액: {available_balance} {coin_str}")
                     return {
                         "equity": equity,
                         "available_balance": available_balance
                     }
                 else:
-                    logging.error(f"{coin.upper()} 잔고 정보가 없습니다.")
+                    logging.error(f"{coin_str} 잔고 정보가 없습니다.")
                     return None
-            elif account_type.upper() == 'SPOT':
+            elif account_type_str == 'SPOT':
                 # SPOT 계정의 경우 전체 잔고 조회
                 account_info = response['result']['list']
+                logging.debug(f"account_info: {account_info}")
+                logging.debug(f"account_info type: {type(account_info)}, first item type: {type(account_info[0]) if len(account_info) > 0 else 'N/A'}")
                 total_equity = 0.0
                 total_available_balance = 0.0
                 for asset in account_info:
