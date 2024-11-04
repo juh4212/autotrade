@@ -82,8 +82,12 @@ def get_account_balance(bybit, account_type='CONTRACT', coin='USDT'):
                     if isinstance(coin_balances, list):
                         usdt_balance = next((coin for coin in coin_balances if coin.get('coin') == 'USDT'), None)
                         if usdt_balance:
+                            # 모든 필드를 로그로 출력
+                            logger.debug(f"USDT Balance Details: {usdt_balance}")
+
                             equity = float(usdt_balance.get('equity', 0))
                             available_balance = float(usdt_balance.get('availableBalance', 0))  # 'availableBalance' 사용
+                            
                             logger.info(f"USDT 전체 자산: {equity}, 사용 가능한 자산: {available_balance}")
                             return {
                                 "equity": equity,
