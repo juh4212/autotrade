@@ -198,7 +198,7 @@ def get_open_positions(bybit, symbol):
         list: 열린 포지션 목록 또는 None
     """
     try:
-        response = bybit_client.get_position(
+        response = bybit.get_position_list(
             category='linear',
             symbol=symbol.upper()
         )
@@ -217,6 +217,9 @@ def get_open_positions(bybit, symbol):
         else:
             logger.error(f"열린 포지션을 가져오는 중 에러 발생: {response.get('retMsg')}")
             return None
+    except AttributeError as e:
+        logger.error(f"Bybit 클라이언트에 메서드가 존재하지 않습니다: {e}")
+        return None
     except Exception as e:
         logger.error(f"열린 포지션을 가져오는 중 예외 발생: {e}")
         return None
@@ -255,7 +258,7 @@ async def execute_trade():
         # 예: 기존 포지션 청산 후 새 포지션 진입 등
         # 여기서는 간단히 포지션이 있다는 정보만 기록
         # 필요에 따라 로직을 추가하세요.
-    
+
     # 현재 시장 데이터 수집
     current_market_data = get_market_data(symbol)
     if not current_market_data:
