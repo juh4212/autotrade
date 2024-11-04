@@ -160,6 +160,8 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
             "isLeverage": 1
         }
 
+        logging.debug(f"place_order 호출: {params}")
+
         response = await asyncio.to_thread(
             bybit_client.place_order,
             **params
@@ -187,6 +189,8 @@ async def execute_trade():
     equity = balance_info.get("equity", 0)
     available_balance = balance_info.get("available_balance", 0)
 
+    logging.debug(f"잔고 정보: equity={equity}, available_balance={available_balance}")
+
     if equity <= 0:
         logging.error("유효한 잔고가 없습니다.")
         return
@@ -213,6 +217,8 @@ async def execute_trade():
     percentage = decision.get('percentage')
     reason = decision.get('reason')
 
+    logging.debug(f"AI Decision: {decision_type}, Percentage: {percentage}, Reason: {reason}")
+
     if not decision_type or percentage is None:
         logging.error("AI 판단이 불완전합니다.")
         return
@@ -238,6 +244,8 @@ async def execute_trade():
 
     # 수량을 소수점 자릿수에 맞게 반올림
     qty = round(qty, qty_precision)
+
+    logging.debug(f"반올림된 주문 수량: {qty}")
 
     if decision_type.lower() == "buy":
         logging.info(f"매수 주문을 실행합니다. 수량: {qty}")
