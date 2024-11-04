@@ -82,39 +82,52 @@ def get_wallet_balance(account_type='CONTRACT', coin='USDT'):
         if response['retCode'] == 0:
             if account_type_str == 'CONTRACT' and coin_str:
                 # CONTRACT 계정의 경우 특정 코인의 잔고 정보 사용
-                coin_info = response['result']['list'][0]
-                logging.debug(f"coin_info: {coin_info}")
-                logging.debug(f"coin_info type: {type(coin_info)}")
-                if isinstance(coin_info, dict) and 'coin' in coin_info and isinstance(coin_info['coin'], str) and coin_info['coin'].upper() == coin_str:
-                    equity = float(coin_info.get('equity', '0'))
-                    available_balance = float(coin_info.get('availableBalance', '0'))
-                    logging.info(f"총 자산 (Equity): {equity} {coin_str}")
-                    logging.info(f"사용 가능 잔액: {available_balance} {coin_str}")
-                    return {
-                        "equity": equity,
-                        "available_balance": available_balance
-                    }
+                if 'list' in response['result'] and isinstance(response['result']['list'], list):
+                    if len(response['result']['list']) > 0:
+                        coin_info = response['result']['list'][0]
+                        logging.debug(f"coin_info: {coin_info}")
+                        logging.debug(f"coin_info type: {type(coin_info)}")
+                        if isinstance(coin_info, dict) and 'coin' in coin_info and isinstance(coin_info['coin'], str) and coin_info['coin'].upper() == coin_str:
+                            equity = float(coin_info.get('equity', '0'))
+                            available_balance = float(coin_info.get('availableBalance', '0'))
+                            logging.info(f"총 자산 (Equity): {equity} {coin_str}")
+                            logging.info(f"사용 가능 잔액: {available_balance} {coin_str}")
+                            return {
+                                "equity": equity,
+                                "available_balance": available_balance
+                            }
+                        else:
+                            logging.error(f"{coin_str} 잔고 정보가 없습니다.")
+                            logging.debug(f"coin_info 내용: {coin_info}")
+                            return None
+                    else:
+                        logging.error("잔고 리스트가 비어 있습니다.")
+                        return None
                 else:
-                    logging.error(f"{coin_str} 잔고 정보가 없습니다.")
+                    logging.error("응답 결과에서 'list' 키가 없거나 리스트가 아닙니다.")
                     return None
             elif account_type_str == 'SPOT':
                 # SPOT 계정의 경우 전체 잔고 조회
-                account_info = response['result']['list']
-                logging.debug(f"account_info: {account_info}")
-                logging.debug(f"account_info type: {type(account_info)}, first item type: {type(account_info[0]) if len(account_info) > 0 else 'N/A'}")
-                total_equity = 0.0
-                total_available_balance = 0.0
-                for asset in account_info:
-                    asset_equity = float(asset.get('equity', '0'))
-                    asset_available = float(asset.get('availableBalance', '0'))
-                    total_equity += asset_equity
-                    total_available_balance += asset_available
-                logging.info(f"SPOT 계정 총 자산 (Equity): {total_equity} USDT")
-                logging.info(f"SPOT 계정 사용 가능 잔액: {total_available_balance} USDT")
-                return {
-                    "equity": total_equity,
-                    "available_balance": total_available_balance
-                }
+                if 'list' in response['result'] and isinstance(response['result']['list'], list):
+                    account_info = response['result']['list']
+                    logging.debug(f"account_info: {account_info}")
+                    logging.debug(f"account_info type: {type(account_info)}, first item type: {type(account_info[0]) if len(account_info) > 0 else 'N/A'}")
+                    total_equity = 0.0
+                    total_available_balance = 0.0
+                    for asset in account_info:
+                        asset_equity = float(asset.get('equity', '0'))
+                        asset_available = float(asset.get('availableBalance', '0'))
+                        total_equity += asset_equity
+                        total_available_balance += asset_available
+                    logging.info(f"SPOT 계정 총 자산 (Equity): {total_equity} USDT")
+                    logging.info(f"SPOT 계정 사용 가능 잔액: {total_available_balance} USDT")
+                    return {
+                        "equity": total_equity,
+                        "available_balance": total_available_balance
+                    }
+                else:
+                    logging.error("응답 결과에서 'list' 키가 없거나 리스트가 아닙니다.")
+                    return None
             else:
                 logging.error("올바르지 않은 계정 유형 또는 파라미터.")
                 return None
