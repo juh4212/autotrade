@@ -186,11 +186,46 @@ async def place_order(symbol, side, qty, order_type="Market", category="linear")
         logger.error(f"주문 실행 중 에러 발생: {e}")
         return None
 
+def get_open_positions(bybit, symbol):
+    """
+    Bybit에서 지정된 심볼의 열린 포지션을 가져옵니다.
+
+    Parameters:
+        bybit (HTTP): pybit.unified_trading.HTTP 클라이언트 객체
+        symbol (str): 거래할 심볼 (예: "BTCUSDT")
+
+    Returns:
+        list: 열린 포지션 목록 또는 None
+    """
+    try:
+        response = bybit_client.get_position(
+            category='linear',
+            symbol=symbol.upper()
+        )
+        # 응답을 JSON 문자열로 포맷팅하여 로그에 기록
+        response_json = json.dumps(response, indent=4, ensure_ascii=False)
+        logger.debug(f"get_open_positions 응답 데이터: {response_json}")  # 전체 응답 데이터 출력
+
+        if response.get('retCode') == 0:
+            positions = response['result']['list']
+            if positions:
+                logger.info(f"{symbol.upper()}의 열린 포지션을 가져왔습니다.")
+                return positions
+            else:
+                logger.info(f"{symbol.upper()}에 열린 포지션이 없습니다.")
+                return []
+        else:
+            logger.error(f"열린 포지션을 가져오는 중 에러 발생: {response.get('retMsg')}")
+            return None
+    except Exception as e:
+        logger.error(f"열린 포지션을 가져오는 중 예외 발생: {e}")
+        return None
+
 async def execute_trade():
     """
     AI의 판단을 받아 매매를 실행하는 함수
     """
-    # 계약 계정 (Derivatives Account)에서 USDT 잔고 조회
+    # CONTRACT 계정 (파생상품 계정)에서 USDT 잔고 조회
     balance_info = get_account_balance(bybit_client, account_type='CONTRACT', coin='USDT')
     if not balance_info:
         logger.error("잔고 정보를 가져오지 못했습니다.")
@@ -208,6 +243,19 @@ async def execute_trade():
     # 거래할 심볼 설정
     symbol = "BTCUSDT"  # 필요에 따라 변경
 
+    # 열린 포지션 조회
+    open_positions = get_open_positions(bybit_client, symbol)
+    if open_positions is None:
+        logger.error("열린 포지션을 가져오지 못했습니다.")
+        return
+    elif len(open_positions) > 0:
+        logger.info(f"현재 {symbol.upper()}에 열린 포지션이 있습니다: {open_positions}")
+        # 포지션이 있는 경우, 사용 가능한 자산이 줄어들 수 있습니다.
+        # 추가적인 로직을 구현할 수 있습니다.
+        # 예: 기존 포지션 청산 후 새 포지션 진입 등
+        # 여기서는 간단히 포지션이 있다는 정보만 기록
+        # 필요에 따라 로직을 추가하세요.
+    
     # 현재 시장 데이터 수집
     current_market_data = get_market_data(symbol)
     if not current_market_data:
